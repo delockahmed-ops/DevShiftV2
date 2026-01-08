@@ -3806,9 +3806,8 @@ MainModule.AutoDodge = {
     Connections = {},
     LastDodgeTime = 0,
     DodgeCooldown = 0.9,
-    Range = 5,
-    RangeSquared = 5 * 5,
-    AnimationIdsSet = {},
+    Range = 4.7, -- Измененный радиус
+    RangeSquared = 4.7 * 4.7, -- Квадрат радиуса для оптимизации
     
     -- УПРОЩЕННАЯ СИСТЕМА ОТСЛЕЖИВАНИЯ
     ActiveAnimations = {}, -- playerName -> {animationId = true} - активные анимации
@@ -3960,21 +3959,34 @@ local function executeDodge()
     return true
 end
 
--- ============ БЫСТРАЯ ПРОВЕРКА ВЗГЛЯДА ============
+-- ============ УЛУЧШЕННАЯ ПРОВЕРКА ВЗГЛЯДА ============
 
 local function isLookingAtPlayer(targetPlayer, localPlayer)
     if not targetPlayer or not targetPlayer.Character then return false end
     if not localPlayer or not localPlayer.Character then return false end
     
     local targetHead = targetPlayer.Character:FindFirstChild("Head")
+    local localHead = localPlayer.Character:FindFirstChild("Head")
     local localRoot = localPlayer.Character:FindFirstChild("HumanoidRootPart")
     
-    if not (targetHead and localRoot) then return false end
+    if not (targetHead and (localHead or localRoot)) then return false end
     
-    local directionToLocal = (localRoot.Position - targetHead.Position).Unit
+    -- Получаем позицию локального игрока (предпочитаем Head, но используем RootPart как запасной вариант)
+    local localPosition = localHead and localHead.Position or localRoot.Position
+    
+    -- Вектор от головы цели к локальному игроку
+    local directionToLocal = (localPosition - targetHead.Position).Unit
+    
+    -- Получаем направление взгляда цели
     local lookVector = targetHead.CFrame.LookVector
     
-    return directionToLocal:Dot(lookVector) > -0.7
+    -- Угол между направлением взгляда цели и направлением к локальному игроку
+    local dotProduct = directionToLocal:Dot(lookVector)
+    
+    -- Более строгая проверка: цель должна смотреть почти прямо на нас
+    -- Чем больше значение (ближе к 1), тем более прямо цель смотрит на нас
+    -- 0.9 означает угол примерно 25 градусов
+    return dotProduct > 0.9
 end
 
 -- ============ МГНОВЕННАЯ ОБРАБОТКА ЧЕРЕЗ HEARTBEAT ============
@@ -3999,6 +4011,8 @@ local function setupHeartbeatProcessing()
         local localRoot = LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
         if not localRoot then return end
         
+        local localPosition = localRoot.Position
+        
         -- Проверяем всех игроков
         for _, player in pairs(Players:GetPlayers()) do
             if player == LocalPlayer then continue end
@@ -4009,15 +4023,17 @@ local function setupHeartbeatProcessing()
             if not targetRoot then continue end
             
             -- Быстрая проверка дистанции
-            local distanceSquared = (targetRoot.Position - localRoot.Position).Magnitude
+            local distanceSquared = (targetRoot.Position - localPosition).Magnitude
             if distanceSquared > autoDodge.RangeSquared then
                 -- Если вне дистанции, очищаем анимации игрока
                 autoDodge.ActiveAnimations[player.Name] = nil
                 continue
             end
             
-            -- Проверка взгляда
+            -- ПРОВЕРКА ВЗГЛЯДА: теперь более строгая
             if not isLookingAtPlayer(player, LocalPlayer) then
+                -- Если игрок не смотрит прямо на нас, очищаем его анимации
+                autoDodge.ActiveAnimations[player.Name] = nil
                 continue
             end
             
@@ -4039,7 +4055,7 @@ local function setupHeartbeatProcessing()
                             autoDodge.ActiveAnimations[player.Name] = {}
                         end
                         
-                        -- Ключ для отслеживания: animationId + timestamp трека
+                        -- Ключ для отслеживания: animationId
                         local animationKey = animId
                         
                         -- Если эта анимация ЕЩЁ НЕ ОБРАБОТАНА для этого игрока
