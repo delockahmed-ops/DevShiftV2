@@ -3141,10 +3141,18 @@ function MainModule.ToggleAutoSafe(enabled)
                         if humanoid.Health <= 25 then
                             -- HP ниже или равно 25 в RLGL
                             if not MainModule.AutoSafe.HasTeleported then
-                                -- Еще не телепортировали - телепортируем
+                                -- Еще не телепортировали - телепортируем ВВЕРХ
                                 local rootPart = character:FindFirstChild("HumanoidRootPart") or character.PrimaryPart
                                 if rootPart then
-                                    rootPart.CFrame = rootPart.CFrame + Vector3.new(0, 100, 0)
+                                    -- Берем текущую позицию и добавляем 100 вверх по оси Y
+                                    local currentPosition = rootPart.Position
+                                    local newPosition = Vector3.new(
+                                        currentPosition.X,
+                                        currentPosition.Y + 100,  -- Телепорт ВВЕРХ на 100 юнитов
+                                        currentPosition.Z
+                                    )
+                                    rootPart.CFrame = CFrame.new(newPosition)
+                                    
                                     MainModule.AutoSafe.HasTeleported = true
                                     MainModule.AutoSafe.LowHPChecked = true
                                     MainModule.ShowNotification("AutoSafe", "Saved from Red Light!", 2)
@@ -3158,10 +3166,18 @@ function MainModule.ToggleAutoSafe(enabled)
                         if humanoid.Health <= 20 then
                             -- HP ниже или равно 20 в HideAndSeek/LightsOut
                             if not MainModule.AutoSafe.HasTeleported then
-                                -- Еще не телепортировали - телепортируем
+                                -- Еще не телепортировали - телепортируем ВВЕРХ
                                 local rootPart = character:FindFirstChild("HumanoidRootPart") or character.PrimaryPart
                                 if rootPart then
-                                    rootPart.CFrame = rootPart.CFrame + Vector3.new(0, 100, 0)
+                                    -- Берем текущую позицию и добавляем 100 вверх по оси Y
+                                    local currentPosition = rootPart.Position
+                                    local newPosition = Vector3.new(
+                                        currentPosition.X,
+                                        currentPosition.Y + 100,  -- Телепорт ВВЕРХ на 100 юнитов
+                                        currentPosition.Z
+                                    )
+                                    rootPart.CFrame = CFrame.new(newPosition)
+                                    
                                     MainModule.AutoSafe.HasTeleported = true
                                     MainModule.AutoSafe.LowHPChecked = true
                                     MainModule.ShowNotification("AutoSafe", "Auto-saved!", 2)
@@ -3175,10 +3191,18 @@ function MainModule.ToggleAutoSafe(enabled)
                         if humanoid.Health <= 20 then
                             -- HP ниже или равно 20 в других играх
                             if not MainModule.AutoSafe.HasTeleported then
-                                -- Еще не телепортировали - телепортируем
+                                -- Еще не телепортировали - телепортируем ВВЕРХ
                                 local rootPart = character:FindFirstChild("HumanoidRootPart") or character.PrimaryPart
                                 if rootPart then
-                                    rootPart.CFrame = rootPart.CFrame + Vector3.new(0, 100, 0)
+                                    -- Берем текущую позицию и добавляем 100 вверх по оси Y
+                                    local currentPosition = rootPart.Position
+                                    local newPosition = Vector3.new(
+                                        currentPosition.X,
+                                        currentPosition.Y + 100,  -- Телепорт ВВЕРХ на 100 юнитов
+                                        currentPosition.Z
+                                    )
+                                    rootPart.CFrame = CFrame.new(newPosition)
+                                    
                                     MainModule.AutoSafe.HasTeleported = true
                                     MainModule.AutoSafe.LowHPChecked = true
                                     MainModule.ShowNotification("AutoSafe", "Auto-saved!", 2)
