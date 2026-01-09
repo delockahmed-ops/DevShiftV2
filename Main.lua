@@ -3805,9 +3805,9 @@ MainModule.AutoDodge = {
     },
     Connections = {},
     LastDodgeTime = 0,
-    DodgeCooldown = 0.9,
-    Range = 4.8,
-    RangeSquared = 4.8 * 4.8,
+    DodgeCooldown = 0.7,
+    Range = 4.7,
+    RangeSquared = 4.7 * 4.7,
     AnimationIdsSet = {},
     
     -- УПРОЩЕННАЯ СИСТЕМА ОТСЛЕЖИВАНИЯ
@@ -3974,7 +3974,7 @@ local function isLookingAtPlayer(targetPlayer, localPlayer)
     local directionToLocal = (localRoot.Position - targetHead.Position).Unit
     local lookVector = targetHead.CFrame.LookVector
     
-    return directionToLocal:Dot(lookVector) > -0.6
+    return directionToLocal:Dot(lookVector) > 0.5
 end
 
 -- ============ МГНОВЕННАЯ ОБРАБОТКА ЧЕРЕЗ HEARTBEAT ============
