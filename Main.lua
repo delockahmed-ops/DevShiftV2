@@ -3136,17 +3136,14 @@ local harmfulEffectsList = {
 local enhancedProtectionConnection = nil
 local jointCleaningConnection = nil
 local ragdollBlockConnection = nil
-local removeStunConnection = nil  -- Добавлено для RemoveStun
 
 local function CleanNegativeEffects(character)
-    if not character then return end
+    if not character or not MainModule.Misc.BypassRagdollEnabled then return end
     pcall(function()
-        -- Удаляем все эффекты из списка
         for _, effectName in ipairs(harmfulEffectsList) do
             local effect = character:FindFirstChild(effectName)
             if effect then
                 if effect:IsA("BasePart") then
-                    -- Плавное исчезновение для частей
                     task.spawn(function()
                         for i = 1, 5 do
                             if effect and effect.Parent then
@@ -3157,47 +3154,19 @@ local function CleanNegativeEffects(character)
                         pcall(function() effect:Destroy() end)
                     end)
                 else
-                    -- Мгновенное удаление для других объектов
                     pcall(function() effect:Destroy() end)
                 end
             end
         end
-        
-        -- Очищаем папки с эффектами
-        local harmfulFolders = {"Stun", "RotateDisabled", "RagdollWakeupImmunity", 
-                                "InjuredWalking", "Ragdoll", "StunEffect", "StunHit"}
-        for _, folderName in ipairs(harmfulFolders) do
-            local folder = character:FindFirstChild(folderName)
-            if folder then
-                pcall(function() folder:Destroy() end)
-            end
-        end
-        
-        -- Очищаем атрибуты у Humanoid
         local humanoid = character:FindFirstChildOfClass("Humanoid")
         if humanoid then
             local badAttributes = {"Stunned", "Paralyzed", "Frozen", "Asleep", "Confused", 
-                                   "Slowed", "Rooted", "Silenced", "Disarmed", "Blinded", 
-                                   "Feared", "Taunted", "Charmed", "Petrified"}
+                                   "Slowed", "Rooted", "Silenced", "Disarmed", "Blinded", "Feared"}
             for _, attr in ipairs(badAttributes) do
                 if humanoid:GetAttribute(attr) then
                     humanoid:SetAttribute(attr, false)
                 end
             end
-            
-            -- Возвращаем нормальное состояние
-            if humanoid.PlatformStand then
-                humanoid.PlatformStand = false
-            end
-            
-            -- Активируем все состояния
-            humanoid:SetStateEnabled(Enum.HumanoidStateType.Freefall, true)
-            humanoid:SetStateEnabled(Enum.HumanoidStateType.FallingDown, true)
-            humanoid:SetStateEnabled(Enum.HumanoidStateType.Jumping, true)
-            humanoid:SetStateEnabled(Enum.HumanoidStateType.Running, true)
-            
-            -- Меняем состояние на бег
-            humanoid:ChangeState(Enum.HumanoidStateType.Running)
         end
     end)
 end
@@ -3208,38 +3177,30 @@ local function CleanJointsAndConstraints(character)
         local Humanoid = character:FindFirstChild("Humanoid")
         local HumanoidRootPart = character:FindFirstChild("HumanoidRootPart")
         local Torso = character:FindFirstChild("Torso") or character:FindFirstChild("UpperTorso")
-        
-        if not Humanoid then return end
-        
-        -- Удаляем Ragdoll и связанные объекты
+        if not (Humanoid and HumanoidRootPart and Torso) then return end
         for _, child in ipairs(character:GetChildren()) do
             if child.Name == "Ragdoll" then
                 pcall(function() child:Destroy() end)
             end
         end
-        
-        -- Очищаем констрейнты
-        if HumanoidRootPart then
-            for _, obj in pairs(HumanoidRootPart:GetChildren()) do
-                if obj:IsA("BallSocketConstraint") or obj:IsA("BodyVelocity") or 
-                   obj:IsA("BodyForce") or obj.Name:match("^CacheAttachment") then
-                    pcall(function() obj:Destroy() end)
-                end
+        for _, folderName in pairs({"Stun", "RotateDisabled", "RagdollWakeupImmunity", "InjuredWalking"}) do
+            local folder = character:FindFirstChild(folderName)
+            if folder then
+                folder:Destroy()
             end
         end
-        
-        -- Восстанавливаем моторы
-        if Torso then
-            local joints = {"Left Hip", "Left Shoulder", "Neck", "Right Hip", "Right Shoulder"}
-            for _, jointName in pairs(joints) do
-                local motor = Torso:FindFirstChild(jointName)
-                if motor and motor:IsA("Motor6D") and not motor.Part0 then
-                    motor.Part0 = Torso
-                end
+        for _, obj in pairs(HumanoidRootPart:GetChildren()) do
+            if obj:IsA("BallSocketConstraint") or obj.Name:match("^CacheAttachment") then
+                obj:Destroy()
             end
         end
-        
-        -- Очищаем кастомные кости
+        local joints = {"Left Hip", "Left Shoulder", "Neck", "Right Hip", "Right Shoulder"}
+        for _, jointName in pairs(joints) do
+            local motor = Torso:FindFirstChild(jointName)
+            if motor and motor:IsA("Motor6D") and not motor.Part0 then
+                motor.Part0 = Torso
+            end
+        end
         for _, part in pairs(character:GetChildren()) do
             if part:IsA("BasePart") and part:FindFirstChild("BoneCustom") then
                 part.BoneCustom:Destroy()
@@ -3248,69 +3209,90 @@ local function CleanJointsAndConstraints(character)
     end)
 end
 
-function MainModule.ToggleRemoveStun(enabled)
-    MainModule.Misc.RemoveStunEnabled = enabled
+local function SetupRagdollListener(character)
+    if not character then return end
+    if ragdollBlockConnection then
+        ragdollBlockConnection:Disconnect()
+        ragdollBlockConnection = nil
+    end
+    local Humanoid = character:FindFirstChild("Humanoid")
+    if not Humanoid then return end
+    ragdollBlockConnection = character.ChildAdded:Connect(function(child)
+        if child.Name == "Ragdoll" then
+            pcall(function() child:Destroy() end)
+            pcall(function()
+                Humanoid.PlatformStand = false
+                Humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
+                Humanoid:SetStateEnabled(Enum.HumanoidStateType.Freefall, true)
+                Humanoid:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false)
+                Humanoid:SetStateEnabled(Enum.HumanoidStateType.Jumping, true)
+            end)
+        end
+    end)
+end
 
-    if enabled then
-        MainModule.ShowNotification("Remove Stun", "Remove Stun Enabled", 3)
-    else
-        MainModule.ShowNotification("Remove Stun", "Remove Stun Disabled", 3)
+function MainModule.StartEnhancedProtection()
+    if enhancedProtectionConnection then
+        enhancedProtectionConnection:Disconnect()
     end
-    
-    -- Отключаем старую коннекцию
-    if removeStunConnection then
-        removeStunConnection:Disconnect()
-        removeStunConnection = nil
-    end
-    
-    if enabled then
-        -- Немедленная чистка при включении
+    enhancedProtectionConnection = RunService.Heartbeat:Connect(function()
+        if not MainModule.Misc.BypassRagdollEnabled then return end
         local character = GetCharacter()
         if character then
             CleanNegativeEffects(character)
+        end
+    end)
+end
+
+function MainModule.StopEnhancedProtection()
+    if enhancedProtectionConnection then
+        enhancedProtectionConnection:Disconnect()
+        enhancedProtectionConnection = nil
+    end
+end
+
+function MainModule.StartJointCleaning()
+    if jointCleaningConnection then
+        jointCleaningConnection:Disconnect()
+    end
+    local character = GetCharacter()
+    if character then
+        CleanJointsAndConstraints(character)
+        SetupRagdollListener(character)
+    end
+    jointCleaningConnection = RunService.Heartbeat:Connect(function()
+        if not MainModule.Misc.BypassRagdollEnabled then return end
+        local character = GetCharacter()
+        if character then
             CleanJointsAndConstraints(character)
         end
-        
-        -- Heartbeat коннекция для постоянной чистки
-        removeStunConnection = RunService.Heartbeat:Connect(function()
-            if not MainModule.Misc.RemoveStunEnabled then 
-                removeStunConnection:Disconnect()
-                removeStunConnection = nil
-                return 
-            end
-            
-            local character = GetCharacter()
-            if character then
-                CleanNegativeEffects(character)
-                CleanJointsAndConstraints(character)
-            end
-        end)
-        
-        -- Слушатель для нового персонажа
-        LocalPlayer.CharacterAdded:Connect(function(newChar)
-            task.wait(1) -- Даем время на загрузку
-            if MainModule.Misc.RemoveStunEnabled then
-                CleanNegativeEffects(newChar)
-                CleanJointsAndConstraints(newChar)
-            end
-        end)
-        
-        -- Слушатель для добавления Ragdoll
-        local char = GetCharacter()
-        if char then
-            char.ChildAdded:Connect(function(child)
-                if child.Name == "Ragdoll" and MainModule.Misc.RemoveStunEnabled then
-                    task.wait(0.05)
-                    pcall(function() child:Destroy() end)
-                    local humanoid = GetHumanoid(char)
-                    if humanoid then
-                        humanoid.PlatformStand = false
-                        humanoid:ChangeState(Enum.HumanoidStateType.Running)
-                    end
-                end
-            end)
-        end
+    end)
+    LocalPlayer.CharacterAdded:Connect(function(newChar)
+        task.wait(1)
+        SetupRagdollListener(newChar)
+        CleanJointsAndConstraints(newChar)
+    end)
+end
+
+function MainModule.StopJointCleaning()
+    if jointCleaningConnection then
+        jointCleaningConnection:Disconnect()
+        jointCleaningConnection = nil
     end
+    if ragdollBlockConnection then
+        ragdollBlockConnection:Disconnect()
+        ragdollBlockConnection = nil
+    end
+end
+
+function MainModule.FullCleanup()
+    local character = GetCharacter()
+    if character then
+        CleanNegativeEffects(character)
+        CleanJointsAndConstraints(character)
+        return true
+    end
+    return false
 end
 
 function MainModule.ToggleBypassRagdoll(enabled)
@@ -3449,6 +3431,47 @@ function MainModule.ToggleBypassRagdoll(enabled)
     else
         MainModule.StopEnhancedProtection()
         MainModule.StopJointCleaning()
+    end
+end
+
+function MainModule.ToggleRemoveStun(enabled)
+    MainModule.Misc.RemoveStunEnabled = enabled
+
+    if enabled then
+        MainModule.ShowNotification("Remove Stun", "Remove Stun Enabled", 3)
+    end
+    
+    if not enabled then return end
+    
+    local function removeStunEffects()
+        local character = GetCharacter()
+        if not character then return end
+        
+        for _, effectName in ipairs(harmfulEffectsList) do
+            local effect = character:FindFirstChild(effectName)
+            if effect then
+                pcall(function() effect:Destroy() end)
+            end
+        end
+        
+        local humanoid = GetHumanoid(character)
+        if humanoid then
+            if humanoid:GetAttribute("Stunned") then
+                humanoid:SetAttribute("Stunned", false)
+            end
+        end
+    end
+    
+    removeStunEffects()
+    
+    if MainModule.Misc.RemoveStunEnabled then
+        local connection = RunService.Heartbeat:Connect(function()
+            if not MainModule.Misc.RemoveStunEnabled then 
+                connection:Disconnect()
+                return 
+            end
+            removeStunEffects()
+        end)
     end
 end
 
