@@ -3805,7 +3805,7 @@ MainModule.AutoDodge = {
     },
     Connections = {},
     LastDodgeTime = 0,
-    DodgeCooldown = 0.5,
+    DodgeCooldown = 0.9,
     Range = 4.8,
     RangeSquared = 4.8 * 4.8,
     AnimationIdsSet = {},
