@@ -437,8 +437,6 @@ function MainModule.GetHider()
     return nil
 end
 
-
-
 -- ULTRA SMOOTH KILLAURA v6.2 - СИНХРОННАЯ ВЕРСИЯ (АНТИ-БАН)
 MainModule.Killaura = {
     Enabled = false,
@@ -449,6 +447,8 @@ MainModule.Killaura = {
         "86197206792061",
         "99157505926076"
     },
+    -- НОВАЯ АНИМАЦИЯ ДЛЯ ОТКЛЮЧЕНИЯ КИЛЛАУРЫ
+    DisableAnimationId = "105341857343164",  -- АНИМАЦИЯ ДЛЯ ВРЕМЕННОГО ОТКЛЮЧЕНИЯ
     Connections = {},
     CurrentTarget = nil,
     IsAttached = false,
@@ -456,9 +456,16 @@ MainModule.Killaura = {
     LiftHeight = 10,
     TargetAnimationsSet = {},
     
+    -- НОВЫЕ ПЕРЕМЕННЫЕ ДЛЯ ОТКЛЮЧЕНИЯ ПО АНИМАЦИИ
+    ShouldDisableForAnimation = false,
+    IsDisabledByAnimation = false,
+    LastDisableTime = 0,
+    DisableAnimationCooldown = 0.5,
+    WasEnabledBeforeAnimation = false,
+    
     -- ОПТИМИЗИРОВАННЫЕ ПАРАМЕТРЫ ДЛЯ СИНХРОННОСТИ
     BehindDistance = 2,  -- Вплотную сзади
-    FrontDistance = 16,  -- РОВНО 15 БЛОКОВ ВПЕРЕДИ (было 14)
+    FrontDistance = 18,  -- РОВНО 15 БЛОКОВ ВПЕРЕДИ (было 14)
     SpeedThreshold = 18,
     
     -- УВЕЛИЧЕННАЯ СКОРОСТЬ И СНИЖЕННАЯ ПЛАВНОСТЬ
@@ -546,6 +553,33 @@ MainModule.Killaura = {
 -- Инициализация анимаций
 for _, animId in pairs(MainModule.Killaura.TeleportAnimations) do
     MainModule.Killaura.TargetAnimationsSet[animId] = true
+end
+
+-- НОВАЯ ФУНКЦИЯ: Проверка анимации отключения
+local function checkDisableAnimation(targetPlayer)
+    if not targetPlayer then return false end
+    
+    local character = targetPlayer.Character
+    if not character then return false end
+    
+    local humanoid = character:FindFirstChildOfClass("Humanoid")
+    if not humanoid then return false end
+    
+    local tracks = humanoid:GetPlayingAnimationTracks()
+    if not tracks then return false end
+    
+    for _, track in pairs(tracks) do
+        if track and track.Animation then
+            local animId = tostring(track.Animation.AnimationId)
+            local cleanId = animId:match("%d+")
+            
+            if cleanId and cleanId == MainModule.Killaura.DisableAnimationId then
+                return true
+            end
+        end
+    end
+    
+    return false
 end
 
 -- УЛУЧШЕННЫЙ поиск игрока
@@ -852,9 +886,70 @@ local function getSmartPositioning(targetRoot)
     end
 end
 
+-- НОВАЯ ФУНКЦИЯ: ОБРАБОТКА ОТКЛЮЧЕНИЯ ПО АНИМАЦИИ
+local function handleDisableAnimation(targetPlayer)
+    local config = MainModule.Killaura
+    
+    if not targetPlayer then return false end
+    
+    local currentTime = tick()
+    local shouldDisable = checkDisableAnimation(targetPlayer)
+    
+    -- Проверяем кулдаун
+    if currentTime - config.LastDisableTime < config.DisableAnimationCooldown then
+        return config.IsDisabledByAnimation
+    end
+    
+    -- Если обнаружена анимация отключения и киллаура включен
+    if shouldDisable and config.Enabled and not config.IsDisabledByAnimation then
+        config.WasEnabledBeforeAnimation = true
+        config.IsDisabledByAnimation = true
+        config.LastDisableTime = currentTime
+        
+        -- Без уведомлений, просто отключаем логику
+        config.ShouldDisableForAnimation = true
+        
+        return true
+    end
+    
+    -- Если анимация закончилась и было отключение
+    if not shouldDisable and config.IsDisabledByAnimation then
+        config.IsDisabledByAnimation = false
+        config.ShouldDisableForAnimation = false
+        config.LastDisableTime = currentTime
+        
+        -- Если киллаура был включен до анимации - ищем новую цель
+        if config.WasEnabledBeforeAnimation then
+            config.WasEnabledBeforeAnimation = false
+            
+            -- Сбрасываем текущую цель и ищем ближайшую
+            config.CurrentTarget = nil
+            config.IsAttached = false
+            
+            local closestPlayer = findClosestPlayer(true)
+            if closestPlayer then
+                config.CurrentTarget = closestPlayer
+                config.IsAttached = true
+            end
+        end
+        
+        return false
+    end
+    
+    return config.IsDisabledByAnimation
+end
+
 -- НОВАЯ ФУНКЦИЯ: СИНХРОННОЕ ДВИЖЕНИЕ (АНТИ-БАН)
 local function syncMovement(localRoot, targetPos, targetLook, deltaTime, isAnimationLift)
     local config = MainModule.Killaura
+    
+    -- Проверяем отключение по анимации
+    if config.ShouldDisableForAnimation then
+        -- Останавливаем движение при отключении
+        config.CurrentVelocity = Vector3.new(0, 0, 0)
+        localRoot.Velocity = config.CurrentVelocity
+        return
+    end
     
     -- Получаем цель для позиционирования
     local targetRoot = nil
@@ -981,7 +1076,7 @@ end
 local function handleGravity(localRoot, targetRoot)
     local config = MainModule.Killaura
     
-    if config.AnimationLiftActive or config.IsJumping or config.IsLifted then
+    if config.AnimationLiftActive or config.IsJumping or config.IsLifted or config.ShouldDisableForAnimation then
         return
     end
     
@@ -1008,7 +1103,7 @@ end
 local function checkAndSwitchTarget()
     local config = MainModule.Killaura
     
-    if not config.Enabled then 
+    if not config.Enabled or config.ShouldDisableForAnimation then 
         config.LostTargetFrames = 0
         return false 
     end
@@ -1058,6 +1153,14 @@ end
 local function syncMovementUpdate(targetRoot, targetHumanoid, localRoot, deltaTime)
     local config = MainModule.Killaura
     
+    -- Проверяем отключение по анимации
+    if config.ShouldDisableForAnimation then
+        -- Останавливаем все движения
+        config.CurrentVelocity = Vector3.new(0, 0, 0)
+        localRoot.Velocity = config.CurrentVelocity
+        return
+    end
+    
     -- Данные цели
     local targetPos = targetRoot.Position
     local targetVel = targetRoot.Velocity
@@ -1104,6 +1207,18 @@ local function updateSyncMovement(deltaTime)
     if not localRoot then return end
     
     local config = MainModule.Killaura
+    
+    -- НОВОЕ: Проверяем анимацию отключения у текущей цели
+    if config.CurrentTarget then
+        local isDisableAnimation = handleDisableAnimation(config.CurrentTarget)
+        
+        -- Если обнаружена анимация отключения, пропускаем обработку
+        if isDisableAnimation then
+            config.CurrentVelocity = Vector3.new(0, 0, 0)
+            localRoot.Velocity = config.CurrentVelocity
+            return
+        end
+    end
     
     -- ПРОВЕРКА ЦЕЛИ
     local shouldKeepTarget = checkAndSwitchTarget()
@@ -1221,6 +1336,11 @@ function MainModule.ToggleKillaura(enabled)
     
     config.Enabled = enabled
     
+    -- Сброс состояний отключения по анимации
+    config.ShouldDisableForAnimation = false
+    config.IsDisabledByAnimation = false
+    config.WasEnabledBeforeAnimation = false
+    
     -- Уведомления
     if enabled then
         MainModule.ShowNotification("Killaura", "Enabled", 1)
@@ -1252,6 +1372,9 @@ function MainModule.ToggleKillaura(enabled)
         config.TeleportCooldown = 0
         config.SyncFrames = 0
         config.IsInSyncMode = false
+        config.ShouldDisableForAnimation = false
+        config.IsDisabledByAnimation = false
+        config.WasEnabledBeforeAnimation = false
         
         -- Остановить мониторинг игры
         if config.GameCheckConnection then
@@ -1282,6 +1405,9 @@ function MainModule.ToggleKillaura(enabled)
         config.TeleportCooldown = 0
         config.SyncFrames = 0
         config.IsInSyncMode = false
+        config.ShouldDisableForAnimation = false
+        config.IsDisabledByAnimation = false
+        config.WasEnabledBeforeAnimation = false
         
         -- НАЧАЛЬНАЯ ТЕЛЕПОРТАЦИЯ
         local localPlayer = game:GetService("Players").LocalPlayer
@@ -1402,6 +1528,9 @@ function MainModule.ToggleKillaura(enabled)
             config.TeleportCooldown = 0
             config.SyncFrames = 0
             config.IsInSyncMode = false
+            config.ShouldDisableForAnimation = false
+            config.IsDisabledByAnimation = false
+            config.WasEnabledBeforeAnimation = false
             
             local closestPlayer = findClosestPlayer(true)
             if closestPlayer then
@@ -1440,11 +1569,17 @@ function MainModule.GetKillauraTarget()
     end
     return "No target"
 end
+
 MainModule.AutoNextGameSettings = {
     Enabled = false,
     Connection = nil,
     Timer = 0,
-    Cooldown = 4,
+    Cooldown = 1.30, -- задержка между вызовами
+    OutsideCooldown = 20, -- время вызова после выхода из радиуса
+    TargetPosition = Vector3.new(-214.30, 186.86, 242.64),
+    Radius = 80,
+    IsInRadius = false,
+    OutsideTimer = 0,
     RemotePath = {
         "ReplicatedStorage",
         "Remotes",
@@ -1452,14 +1587,13 @@ MainModule.AutoNextGameSettings = {
     }
 }
 
-
 function MainModule.AutoNextGame(enabled)
     MainModule.AutoNextGameSettings.Enabled = enabled
     
     if enabled then
         MainModule.ShowNotification("Auto Next Game", "Enabled", 2)
         
-        MainModule.AutoNextGameSettings.Connection = RunService.Heartbeat:Connect(function()
+        MainModule.AutoNextGameSettings.Connection = RunService.Heartbeat:Connect(function(deltaTime)
             if not MainModule.AutoNextGameSettings.Enabled then 
                 if MainModule.AutoNextGameSettings.Connection then
                     MainModule.AutoNextGameSettings.Connection:Disconnect()
@@ -1468,17 +1602,69 @@ function MainModule.AutoNextGame(enabled)
                 return 
             end
             
-            MainModule.AutoNextGameSettings.Timer = MainModule.AutoNextGameSettings.Timer + task.wait()
+            -- Получаем позицию персонажа
+            local character = LocalPlayer.Character
+            local playerPosition = character and character.PrimaryPart and character.PrimaryPart.Position
             
-            if MainModule.AutoNextGameSettings.Timer >= MainModule.AutoNextGameSettings.Cooldown then
-                MainModule.AutoNextGameSettings.Timer = 0
+            if playerPosition then
+                -- Проверяем, находится ли игрок в радиусе
+                local distance = (playerPosition - MainModule.AutoNextGameSettings.TargetPosition).Magnitude
+                local isNowInRadius = distance <= MainModule.AutoNextGameSettings.Radius
                 
-                pcall(function()
-                    local remote = game:GetService(MainModule.AutoNextGameSettings.RemotePath[1])
-                        :WaitForChild(MainModule.AutoNextGameSettings.RemotePath[2])
-                        :WaitForChild(MainModule.AutoNextGameSettings.RemotePath[3])
-                    remote:FireServer()
-                end)
+                -- Если игрок только что вошел в радиус
+                if isNowInRadius and not MainModule.AutoNextGameSettings.IsInRadius then
+                    MainModule.AutoNextGameSettings.IsInRadius = true
+                    MainModule.AutoNextGameSettings.Timer = 0
+                    MainModule.AutoNextGameSettings.OutsideTimer = 0
+                end
+                
+                -- Если игрок только что вышел из радиуса
+                if not isNowInRadius and MainModule.AutoNextGameSettings.IsInRadius then
+                    MainModule.AutoNextGameSettings.IsInRadius = false
+                    MainModule.AutoNextGameSettings.OutsideTimer = 0
+                end
+                
+                MainModule.AutoNextGameSettings.IsInRadius = isNowInRadius
+                
+                -- Обновляем таймеры
+                if MainModule.AutoNextGameSettings.IsInRadius then
+                    -- В радиусе: обновляем обычный таймер
+                    MainModule.AutoNextGameSettings.Timer = MainModule.AutoNextGameSettings.Timer + deltaTime
+                    MainModule.AutoNextGameSettings.OutsideTimer = 0
+                else
+                    -- Вне радиуса: обновляем таймер для вызовов после выхода
+                    MainModule.AutoNextGameSettings.OutsideTimer = MainModule.AutoNextGameSettings.OutsideTimer + deltaTime
+                    MainModule.AutoNextGameSettings.Timer = 0
+                end
+                
+                -- Проверяем условия для вызова remote
+                local shouldCallRemote = false
+                
+                if MainModule.AutoNextGameSettings.IsInRadius then
+                    -- В радиусе: вызываем каждые 1.25 секунд
+                    if MainModule.AutoNextGameSettings.Timer >= MainModule.AutoNextGameSettings.Cooldown then
+                        shouldCallRemote = true
+                        MainModule.AutoNextGameSettings.Timer = 0
+                    end
+                else
+                    -- Вне радиуса: вызываем только если прошло меньше 20 секунд после выхода
+                    if MainModule.AutoNextGameSettings.OutsideTimer <= MainModule.AutoNextGameSettings.OutsideCooldown then
+                        if MainModule.AutoNextGameSettings.OutsideTimer >= MainModule.AutoNextGameSettings.Cooldown then
+                            shouldCallRemote = true
+                            -- Не сбрасываем OutsideTimer, чтобы отслеживать общее время после выхода
+                        end
+                    end
+                end
+                
+                -- Вызываем remote если нужно
+                if shouldCallRemote then
+                    pcall(function()
+                        local remote = game:GetService(MainModule.AutoNextGameSettings.RemotePath[1])
+                            :WaitForChild(MainModule.AutoNextGameSettings.RemotePath[2])
+                            :WaitForChild(MainModule.AutoNextGameSettings.RemotePath[3])
+                        remote:FireServer()
+                    end)
+                end
             end
         end)
         
@@ -1491,8 +1677,449 @@ function MainModule.AutoNextGame(enabled)
         end
         
         MainModule.AutoNextGameSettings.Timer = 0
+        MainModule.AutoNextGameSettings.OutsideTimer = 0
+        MainModule.AutoNextGameSettings.IsInRadius = false
     end
 end
+
+MainModule.FreeGuardSettings = {
+    Enabled = false,
+    MaxCycles = 5,
+    ButtonWaitTime = 0.6
+}
+
+function MainModule.FreeGuard(enabled)
+    MainModule.FreeGuardSettings.Enabled = enabled
+    
+    if enabled then
+        MainModule.ShowNotification("Free Guard", "Enabled", 2)
+        
+        local LocalPlayer = Players.LocalPlayer
+        
+        -- Устанавливаем атрибут
+        LocalPlayer:SetAttribute("__OwnsPermGuard", true)
+        
+        -- Локальные функции
+        local function shouldIgnoreButton(button)
+            if not button then return true end
+            
+            local buttonName = button.Name:lower()
+            local buttonText = ""
+            if button:IsA("TextButton") and button.Text then
+                buttonText = button.Text:lower()
+            end
+            
+            local fullText = buttonName .. " " .. buttonText
+            
+            local forbiddenWords = {
+                "buy", "playable", "one.time", "onetime", "temporary", 
+                "onetim", "time.playable", "time.guard", "playable.guard",
+                "one.time.guard", "temporary.guard", "playable.one.time"
+            }
+            
+            for _, word in ipairs(forbiddenWords) do
+                if string.find(fullText, word) then
+                    return true
+                end
+            end
+            
+            return false
+        end
+        
+        local function findButtonByCriteria(criteria)
+            local playerGui = LocalPlayer.PlayerGui
+            
+            local function searchInGui(guiObject)
+                local foundButtons = {}
+                
+                for _, child in pairs(guiObject:GetChildren()) do
+                    if child:IsA("TextButton") or child:IsA("ImageButton") then
+                        local matches = true
+                        
+                        if criteria.skipBuy then
+                            local btnName = child.Name:lower()
+                            local hasBuy = string.find(btnName, "buy")
+                            
+                            if child:IsA("TextButton") and child.Text then
+                                local btnText = child.Text:lower()
+                                hasBuy = hasBuy or string.find(btnText, "buy")
+                            end
+                            
+                            if hasBuy then
+                                matches = false
+                            end
+                        end
+                        
+                        if criteria.name and child.Name ~= criteria.name then
+                            matches = false
+                        end
+                        
+                        if criteria.text and child:IsA("TextButton") and child.Text then
+                            local btnText = child.Text:lower()
+                            if not string.find(btnText, criteria.text:lower()) then
+                                matches = false
+                            end
+                        end
+                        
+                        if criteria.color and child.BackgroundColor3 ~= criteria.color then
+                            matches = false
+                        end
+                        
+                        if matches then
+                            table.insert(foundButtons, child)
+                        end
+                    end
+                    
+                    if #child:GetChildren() > 0 then
+                        local nestedResults = searchInGui(child)
+                        for _, btn in ipairs(nestedResults) do
+                            table.insert(foundButtons, btn)
+                        end
+                    end
+                end
+                
+                return foundButtons
+            end
+            
+            return searchInGui(playerGui)
+        end
+        
+        local function findButtonByPartialPath(pathParts, skipBuy)
+            local playerGui = LocalPlayer.PlayerGui
+            
+            local function deepSearch(parent, depth)
+                if depth > #pathParts then
+                    return nil
+                end
+                
+                local targetName = pathParts[depth]
+                
+                for _, child in pairs(parent:GetChildren()) do
+                    if skipBuy and string.find(child.Name:lower(), "buy") then
+                        continue
+                    end
+                    
+                    if string.find(child.Name:lower(), targetName:lower()) then
+                        if depth == #pathParts then
+                            return child
+                        else
+                            local found = deepSearch(child, depth + 1)
+                            if found then
+                                return found
+                            end
+                        end
+                    elseif #child:GetChildren() > 0 then
+                        local found = deepSearch(child, depth)
+                        if found then
+                            return found
+                        end
+                    end
+                end
+                
+                return nil
+            end
+            
+            return deepSearch(playerGui, 1)
+        end
+        
+        local function clickButton(button)
+            if not button then return false end
+            
+            local buttonName = button.Name:lower()
+            local buttonText = ""
+            if button:IsA("TextButton") and button.Text then
+                buttonText = button.Text:lower()
+            end
+            
+            local fullText = buttonName .. " " .. buttonText
+            
+            if string.find(fullText, "buy") or
+               string.find(fullText, "playable") or
+               string.find(fullText, "one.time") or
+               string.find(fullText, "onetime") or
+               string.find(fullText, "temporary") or
+               string.find(fullText, "onetim") or
+               string.find(fullText, "time.playable") or
+               string.find(fullText, "time.guard") or
+               string.find(fullText, "playable.guard") then
+                return false
+            end
+            
+            if button:IsA("ImageLabel") or button:IsA("Frame") then
+                local childButton = button:FindFirstChildWhichIsA("TextButton") or 
+                                    button:FindFirstChildWhichIsA("ImageButton")
+                if childButton then
+                    button = childButton
+                else
+                    local parent = button.Parent
+                    if parent and (parent:IsA("TextButton") or parent:IsA("ImageButton")) then
+                        button = parent
+                    else
+                        return false
+                    end
+                end
+            end
+            
+            if not (button:IsA("TextButton") or button:IsA("ImageButton")) then
+                return false
+            end
+            
+            local success = false
+            
+            if getconnections then
+                local connections = getconnections(button.MouseButton1Click)
+                if #connections > 0 then
+                    for _, conn in pairs(connections) do
+                        pcall(function()
+                            conn:Fire()
+                            success = true
+                        end)
+                    end
+                end
+            end
+            
+            if not success then
+                pcall(function()
+                    button.MouseButton1Click:Fire()
+                    success = true
+                end)
+            end
+            
+            if not success and button:IsA("GuiButton") then
+                pcall(function()
+                    button:Activate()
+                    success = true
+                end)
+            end
+            
+            return success
+        end
+        
+        local function executeGuardCycle()
+            local successCount = 0
+            
+            -- Поиск зеленых кнопок (1-я кнопка)
+            local greenButtons = findButtonByCriteria({
+                color = Color3.fromRGB(0, 255, 0),
+                skipBuy = true
+            })
+            
+            local filteredGreenButtons = {}
+            for _, btn in ipairs(greenButtons) do
+                if not shouldIgnoreButton(btn) then
+                    table.insert(filteredGreenButtons, btn)
+                end
+            end
+            
+            if #filteredGreenButtons == 0 then
+                local acceptButtons = findButtonByCriteria({
+                    text = "accept",
+                    skipBuy = true
+                })
+                
+                for _, btn in ipairs(acceptButtons) do
+                    if not shouldIgnoreButton(btn) then
+                        table.insert(filteredGreenButtons, btn)
+                    end
+                end
+            end
+            
+            if #filteredGreenButtons == 0 then
+                local nameGreenButtons = findButtonByCriteria({
+                    name = "Green",
+                    skipBuy = true
+                })
+                
+                for _, btn in ipairs(nameGreenButtons) do
+                    if not shouldIgnoreButton(btn) then
+                        table.insert(filteredGreenButtons, btn)
+                    end
+                end
+            end
+            
+            local button1 = findButtonByPartialPath({"HeaderPrompt", "Green"}, true)
+            if button1 and not shouldIgnoreButton(button1) then
+                table.insert(filteredGreenButtons, button1) 
+            end
+            
+            -- Клик по зеленой кнопке (1-я кнопка)
+            if #filteredGreenButtons > 0 then
+                for _, btn in ipairs(filteredGreenButtons) do
+                    if clickButton(btn) then
+                        successCount = successCount + 1
+                        break
+                    end
+                end
+            end
+            
+            if successCount == 0 then
+                return false
+            end
+            
+            -- Задержка 0.6 секунды
+            task.wait(MainModule.FreeGuardSettings.ButtonWaitTime)
+            
+            -- Поиск кнопок Tier1 (2-я кнопка)
+            local tierButtons = findButtonByCriteria({
+                name = "EquipTier1",
+                skipBuy = true
+            })
+            
+            local filteredTierButtons = {}
+            for _, btn in ipairs(tierButtons) do
+                if not shouldIgnoreButton(btn) then
+                    table.insert(filteredTierButtons, btn)
+                end
+            end
+            
+            if #filteredTierButtons == 0 then
+                local button2 = findButtonByPartialPath({"RankSelection", "EquipTier1"}, true)
+                if button2 and not shouldIgnoreButton(button2) then
+                    table.insert(filteredTierButtons, button2) 
+                end
+            end
+            
+            if #filteredTierButtons == 0 then
+                local tier1Buttons = findButtonByCriteria({
+                    text = "tier1",
+                    skipBuy = true
+                })
+                
+                for _, btn in ipairs(tier1Buttons) do
+                    if not shouldIgnoreButton(btn) then
+                        table.insert(filteredTierButtons, btn)
+                    end
+                end
+            end
+            
+            if #filteredTierButtons == 0 then
+                local allButtons = findButtonByCriteria({skipBuy = true})
+                for _, btn in ipairs(allButtons) do
+                    local btnName = btn.Name:lower()
+                    local btnText = ""
+                    if btn:IsA("TextButton") and btn.Text then
+                        btnText = btn.Text:lower()
+                    end
+                    
+                    local hasTier1 = string.find(btnName, "tier1") or 
+                                    string.find(btnText, "tier1")
+                    
+                    if hasTier1 and not shouldIgnoreButton(btn) then
+                        table.insert(filteredTierButtons, btn)
+                    end
+                end
+            end
+            
+            -- Клик по Tier1 кнопке (2-я кнопка)
+            if #filteredTierButtons > 0 then
+                for _, tierBtn in ipairs(filteredTierButtons) do
+                    if clickButton(tierBtn) then
+                        successCount = successCount + 1
+                        break
+                    end
+                end
+            end
+            
+            if successCount < 2 then
+                return false
+            end
+            
+            -- Задержка 0.6 секунды
+            task.wait(MainModule.FreeGuardSettings.ButtonWaitTime)
+            
+            -- Поиск кнопок подтверждения (3-я кнопка)
+            local confirmButtons = findButtonByCriteria({
+                color = Color3.fromRGB(0, 255, 0),
+                skipBuy = true
+            })
+            
+            local filteredConfirmButtons = {}
+            for _, btn in ipairs(confirmButtons) do
+                if not shouldIgnoreButton(btn) then
+                    table.insert(filteredConfirmButtons, btn)
+                end
+            end
+            
+            local playerGui = LocalPlayer.PlayerGui
+            local function findGreenImageLabel(parent)
+                for _, child in pairs(parent:GetChildren()) do
+                    local childName = child.Name:lower()
+                    if child:IsA("ImageLabel") and 
+                       (string.find(childName, "green") or child.Name == "Green") and
+                       not shouldIgnoreButton(child) then
+                        return child
+                    end
+                    if #child:GetChildren() > 0 then
+                        local found = findGreenImageLabel(child)
+                        if found then return found end
+                    end
+                end
+                return nil
+            end
+            
+            local greenImageLabel = findGreenImageLabel(playerGui)
+            if greenImageLabel and clickButton(greenImageLabel) then
+                successCount = successCount + 1
+                return true
+            end
+            
+            local confirmButton3 = findButtonByPartialPath({"RankConfirmation", "Green"}, true)
+            if confirmButton3 and not shouldIgnoreButton(confirmButton3) and clickButton(confirmButton3) then
+                successCount = successCount + 1
+                return true
+            end
+            
+            local confirmTextButtons = findButtonByCriteria({
+                text = "confirm",
+                skipBuy = true
+            })
+            
+            for _, cbtn in ipairs(confirmTextButtons) do
+                if not shouldIgnoreButton(cbtn) and clickButton(cbtn) then
+                    successCount = successCount + 1
+                    return true
+                end
+            end
+            
+            return successCount > 2
+        end
+        
+        -- Функция для мгновенного выполнения 5 циклов
+        local function executeAllCyclesInstantly()
+            local cyclesCompleted = 0
+            local totalCycles = MainModule.FreeGuardSettings.MaxCycles
+            
+            for i = 1, totalCycles do
+                if MainModule.FreeGuardSettings.Enabled then
+                    if executeGuardCycle() then
+                        cyclesCompleted = cyclesCompleted + 1
+                    end
+                    -- Нет задержки между циклами, только 0.6 секунды внутри цикла
+                else
+                    break
+                end
+            end
+            
+            -- Показываем простое уведомление "Completed"
+            MainModule.ShowNotification("Free Guard", "Completed", 2)
+            
+            -- Ждем 2 секунды и выключаем
+            task.wait(2)
+            
+            -- Выключаем функцию
+            MainModule.FreeGuardSettings.Enabled = false
+        end
+        
+        -- Запускаем мгновенное выполнение
+        spawn(executeAllCyclesInstantly)
+        
+    else
+        MainModule.ShowNotification("Free Guard", "Disabled", 2)
+        MainModule.FreeGuardSettings.Enabled = false
+    end
+end
+
+
 
 MainModule.InstantInteractSettings = {
     Enabled = false,
@@ -1599,7 +2226,7 @@ function MainModule.ToggleNoCooldownProximity(enabled)
 end
 
 MainModule.Hitbox = {
-    Size = 150,
+    Size = 50,
     Enabled = false,
     Connection = nil,
     ModifiedParts = {}
@@ -2509,14 +3136,17 @@ local harmfulEffectsList = {
 local enhancedProtectionConnection = nil
 local jointCleaningConnection = nil
 local ragdollBlockConnection = nil
+local removeStunConnection = nil  -- Добавлено для RemoveStun
 
 local function CleanNegativeEffects(character)
-    if not character or not MainModule.Misc.BypassRagdollEnabled then return end
+    if not character then return end
     pcall(function()
+        -- Удаляем все эффекты из списка
         for _, effectName in ipairs(harmfulEffectsList) do
             local effect = character:FindFirstChild(effectName)
             if effect then
                 if effect:IsA("BasePart") then
+                    -- Плавное исчезновение для частей
                     task.spawn(function()
                         for i = 1, 5 do
                             if effect and effect.Parent then
@@ -2527,19 +3157,47 @@ local function CleanNegativeEffects(character)
                         pcall(function() effect:Destroy() end)
                     end)
                 else
+                    -- Мгновенное удаление для других объектов
                     pcall(function() effect:Destroy() end)
                 end
             end
         end
+        
+        -- Очищаем папки с эффектами
+        local harmfulFolders = {"Stun", "RotateDisabled", "RagdollWakeupImmunity", 
+                                "InjuredWalking", "Ragdoll", "StunEffect", "StunHit"}
+        for _, folderName in ipairs(harmfulFolders) do
+            local folder = character:FindFirstChild(folderName)
+            if folder then
+                pcall(function() folder:Destroy() end)
+            end
+        end
+        
+        -- Очищаем атрибуты у Humanoid
         local humanoid = character:FindFirstChildOfClass("Humanoid")
         if humanoid then
             local badAttributes = {"Stunned", "Paralyzed", "Frozen", "Asleep", "Confused", 
-                                   "Slowed", "Rooted", "Silenced", "Disarmed", "Blinded", "Feared"}
+                                   "Slowed", "Rooted", "Silenced", "Disarmed", "Blinded", 
+                                   "Feared", "Taunted", "Charmed", "Petrified"}
             for _, attr in ipairs(badAttributes) do
                 if humanoid:GetAttribute(attr) then
                     humanoid:SetAttribute(attr, false)
                 end
             end
+            
+            -- Возвращаем нормальное состояние
+            if humanoid.PlatformStand then
+                humanoid.PlatformStand = false
+            end
+            
+            -- Активируем все состояния
+            humanoid:SetStateEnabled(Enum.HumanoidStateType.Freefall, true)
+            humanoid:SetStateEnabled(Enum.HumanoidStateType.FallingDown, true)
+            humanoid:SetStateEnabled(Enum.HumanoidStateType.Jumping, true)
+            humanoid:SetStateEnabled(Enum.HumanoidStateType.Running, true)
+            
+            -- Меняем состояние на бег
+            humanoid:ChangeState(Enum.HumanoidStateType.Running)
         end
     end)
 end
@@ -2550,30 +3208,38 @@ local function CleanJointsAndConstraints(character)
         local Humanoid = character:FindFirstChild("Humanoid")
         local HumanoidRootPart = character:FindFirstChild("HumanoidRootPart")
         local Torso = character:FindFirstChild("Torso") or character:FindFirstChild("UpperTorso")
-        if not (Humanoid and HumanoidRootPart and Torso) then return end
+        
+        if not Humanoid then return end
+        
+        -- Удаляем Ragdoll и связанные объекты
         for _, child in ipairs(character:GetChildren()) do
             if child.Name == "Ragdoll" then
                 pcall(function() child:Destroy() end)
             end
         end
-        for _, folderName in pairs({"Stun", "RotateDisabled", "RagdollWakeupImmunity", "InjuredWalking"}) do
-            local folder = character:FindFirstChild(folderName)
-            if folder then
-                folder:Destroy()
+        
+        -- Очищаем констрейнты
+        if HumanoidRootPart then
+            for _, obj in pairs(HumanoidRootPart:GetChildren()) do
+                if obj:IsA("BallSocketConstraint") or obj:IsA("BodyVelocity") or 
+                   obj:IsA("BodyForce") or obj.Name:match("^CacheAttachment") then
+                    pcall(function() obj:Destroy() end)
+                end
             end
         end
-        for _, obj in pairs(HumanoidRootPart:GetChildren()) do
-            if obj:IsA("BallSocketConstraint") or obj.Name:match("^CacheAttachment") then
-                obj:Destroy()
+        
+        -- Восстанавливаем моторы
+        if Torso then
+            local joints = {"Left Hip", "Left Shoulder", "Neck", "Right Hip", "Right Shoulder"}
+            for _, jointName in pairs(joints) do
+                local motor = Torso:FindFirstChild(jointName)
+                if motor and motor:IsA("Motor6D") and not motor.Part0 then
+                    motor.Part0 = Torso
+                end
             end
         end
-        local joints = {"Left Hip", "Left Shoulder", "Neck", "Right Hip", "Right Shoulder"}
-        for _, jointName in pairs(joints) do
-            local motor = Torso:FindFirstChild(jointName)
-            if motor and motor:IsA("Motor6D") and not motor.Part0 then
-                motor.Part0 = Torso
-            end
-        end
+        
+        -- Очищаем кастомные кости
         for _, part in pairs(character:GetChildren()) do
             if part:IsA("BasePart") and part:FindFirstChild("BoneCustom") then
                 part.BoneCustom:Destroy()
@@ -2582,90 +3248,69 @@ local function CleanJointsAndConstraints(character)
     end)
 end
 
-local function SetupRagdollListener(character)
-    if not character then return end
-    if ragdollBlockConnection then
-        ragdollBlockConnection:Disconnect()
-        ragdollBlockConnection = nil
-    end
-    local Humanoid = character:FindFirstChild("Humanoid")
-    if not Humanoid then return end
-    ragdollBlockConnection = character.ChildAdded:Connect(function(child)
-        if child.Name == "Ragdoll" then
-            pcall(function() child:Destroy() end)
-            pcall(function()
-                Humanoid.PlatformStand = false
-                Humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
-                Humanoid:SetStateEnabled(Enum.HumanoidStateType.Freefall, true)
-                Humanoid:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false)
-                Humanoid:SetStateEnabled(Enum.HumanoidStateType.Jumping, true)
-            end)
-        end
-    end)
-end
+function MainModule.ToggleRemoveStun(enabled)
+    MainModule.Misc.RemoveStunEnabled = enabled
 
-function MainModule.StartEnhancedProtection()
-    if enhancedProtectionConnection then
-        enhancedProtectionConnection:Disconnect()
+    if enabled then
+        MainModule.ShowNotification("Remove Stun", "Remove Stun Enabled", 3)
+    else
+        MainModule.ShowNotification("Remove Stun", "Remove Stun Disabled", 3)
     end
-    enhancedProtectionConnection = RunService.Heartbeat:Connect(function()
-        if not MainModule.Misc.BypassRagdollEnabled then return end
+    
+    -- Отключаем старую коннекцию
+    if removeStunConnection then
+        removeStunConnection:Disconnect()
+        removeStunConnection = nil
+    end
+    
+    if enabled then
+        -- Немедленная чистка при включении
         local character = GetCharacter()
         if character then
             CleanNegativeEffects(character)
-        end
-    end)
-end
-
-function MainModule.StopEnhancedProtection()
-    if enhancedProtectionConnection then
-        enhancedProtectionConnection:Disconnect()
-        enhancedProtectionConnection = nil
-    end
-end
-
-function MainModule.StartJointCleaning()
-    if jointCleaningConnection then
-        jointCleaningConnection:Disconnect()
-    end
-    local character = GetCharacter()
-    if character then
-        CleanJointsAndConstraints(character)
-        SetupRagdollListener(character)
-    end
-    jointCleaningConnection = RunService.Heartbeat:Connect(function()
-        if not MainModule.Misc.BypassRagdollEnabled then return end
-        local character = GetCharacter()
-        if character then
             CleanJointsAndConstraints(character)
         end
-    end)
-    LocalPlayer.CharacterAdded:Connect(function(newChar)
-        task.wait(1)
-        SetupRagdollListener(newChar)
-        CleanJointsAndConstraints(newChar)
-    end)
-end
-
-function MainModule.StopJointCleaning()
-    if jointCleaningConnection then
-        jointCleaningConnection:Disconnect()
-        jointCleaningConnection = nil
+        
+        -- Heartbeat коннекция для постоянной чистки
+        removeStunConnection = RunService.Heartbeat:Connect(function()
+            if not MainModule.Misc.RemoveStunEnabled then 
+                removeStunConnection:Disconnect()
+                removeStunConnection = nil
+                return 
+            end
+            
+            local character = GetCharacter()
+            if character then
+                CleanNegativeEffects(character)
+                CleanJointsAndConstraints(character)
+            end
+        end)
+        
+        -- Слушатель для нового персонажа
+        LocalPlayer.CharacterAdded:Connect(function(newChar)
+            task.wait(1) -- Даем время на загрузку
+            if MainModule.Misc.RemoveStunEnabled then
+                CleanNegativeEffects(newChar)
+                CleanJointsAndConstraints(newChar)
+            end
+        end)
+        
+        -- Слушатель для добавления Ragdoll
+        local char = GetCharacter()
+        if char then
+            char.ChildAdded:Connect(function(child)
+                if child.Name == "Ragdoll" and MainModule.Misc.RemoveStunEnabled then
+                    task.wait(0.05)
+                    pcall(function() child:Destroy() end)
+                    local humanoid = GetHumanoid(char)
+                    if humanoid then
+                        humanoid.PlatformStand = false
+                        humanoid:ChangeState(Enum.HumanoidStateType.Running)
+                    end
+                end
+            end)
+        end
     end
-    if ragdollBlockConnection then
-        ragdollBlockConnection:Disconnect()
-        ragdollBlockConnection = nil
-    end
-end
-
-function MainModule.FullCleanup()
-    local character = GetCharacter()
-    if character then
-        CleanNegativeEffects(character)
-        CleanJointsAndConstraints(character)
-        return true
-    end
-    return false
 end
 
 function MainModule.ToggleBypassRagdoll(enabled)
@@ -2804,47 +3449,6 @@ function MainModule.ToggleBypassRagdoll(enabled)
     else
         MainModule.StopEnhancedProtection()
         MainModule.StopJointCleaning()
-    end
-end
-
-function MainModule.ToggleRemoveStun(enabled)
-    MainModule.Misc.RemoveStunEnabled = enabled
-
-    if enabled then
-        MainModule.ShowNotification("Remove Stun", "Remove Stun Enabled", 3)
-    end
-    
-    if not enabled then return end
-    
-    local function removeStunEffects()
-        local character = GetCharacter()
-        if not character then return end
-        
-        for _, effectName in ipairs(harmfulEffectsList) do
-            local effect = character:FindFirstChild(effectName)
-            if effect then
-                pcall(function() effect:Destroy() end)
-            end
-        end
-        
-        local humanoid = GetHumanoid(character)
-        if humanoid then
-            if humanoid:GetAttribute("Stunned") then
-                humanoid:SetAttribute("Stunned", false)
-            end
-        end
-    end
-    
-    removeStunEffects()
-    
-    if MainModule.Misc.RemoveStunEnabled then
-        local connection = RunService.Heartbeat:Connect(function()
-            if not MainModule.Misc.RemoveStunEnabled then 
-                connection:Disconnect()
-                return 
-            end
-            removeStunEffects()
-        end)
     end
 end
 
@@ -3138,7 +3742,7 @@ function MainModule.ToggleAutoSafe(enabled)
                 local humanoid = character:FindFirstChildOfClass("Humanoid")
                 if humanoid then
                     if IsGameActive("RedLightGreenLight") then
-                        if humanoid.Health <= 25 then
+                        if humanoid.Health <= 35 then
                             -- HP ниже или равно 25 в RLGL
                             if not MainModule.AutoSafe.HasTeleported then
                                 -- Еще не телепортировали - телепортируем ВВЕРХ
@@ -3158,12 +3762,12 @@ function MainModule.ToggleAutoSafe(enabled)
                                     MainModule.ShowNotification("AutoSafe", "Saved from Red Light!", 2)
                                 end
                             end
-                        elseif humanoid.Health > 25 and MainModule.AutoSafe.HasTeleported then
+                        elseif humanoid.Health > 35 and MainModule.AutoSafe.HasTeleported then
                             -- HP восстановилось выше 25 в RLGL - сбрасываем флаг
                             MainModule.AutoSafe.HasTeleported = false
                         end
                     elseif IsGameActive("HideAndSeek") or IsGameActive("LightsOut") or IsGameActive("LightOut") then
-                        if humanoid.Health <= 20 then
+                        if humanoid.Health <= 30 then
                             -- HP ниже или равно 20 в HideAndSeek/LightsOut
                             if not MainModule.AutoSafe.HasTeleported then
                                 -- Еще не телепортировали - телепортируем ВВЕРХ
@@ -3183,12 +3787,12 @@ function MainModule.ToggleAutoSafe(enabled)
                                     MainModule.ShowNotification("AutoSafe", "Auto-saved!", 2)
                                 end
                             end
-                        elseif humanoid.Health > 20 and MainModule.AutoSafe.HasTeleported then
+                        elseif humanoid.Health > 30 and MainModule.AutoSafe.HasTeleported then
                             -- HP восстановилось выше 20 - сбрасываем флаг
                             MainModule.AutoSafe.HasTeleported = false
                         end
                     else
-                        if humanoid.Health <= 20 then
+                        if humanoid.Health <= 30 then
                             -- HP ниже или равно 20 в других играх
                             if not MainModule.AutoSafe.HasTeleported then
                                 -- Еще не телепортировали - телепортируем ВВЕРХ
@@ -3208,7 +3812,7 @@ function MainModule.ToggleAutoSafe(enabled)
                                     MainModule.ShowNotification("AutoSafe", "Auto-saved!", 2)
                                 end
                             end
-                        elseif humanoid.Health > 20 and MainModule.AutoSafe.HasTeleported then
+                        elseif humanoid.Health > 30 and MainModule.AutoSafe.HasTeleported then
                             -- HP восстановилось выше 20 - сбрасываем флаг
                             MainModule.AutoSafe.HasTeleported = false
                         end
@@ -3326,7 +3930,7 @@ MainModule.SpikesKillFeature = {
         "rbxassetid://118039465583394"
     },
     SpikesPosition = nil,
-    PlatformHeightOffset = 5,
+    PlatformHeightOffset = 10,
     ReturnDelay = 0.6,
     OriginalCFrame = nil,
     ActiveAnimation = false,
@@ -3337,9 +3941,8 @@ MainModule.SpikesKillFeature = {
     AnimationCheckConnection = nil,
     TrackedAnimations = {},
     SafetyCheckConnection = nil,
-    OriginalSpikes = {},
-    SpikesRemoved = false,
-    NoKnifeTimer = 0
+    PlatformPart = nil,
+    PlatformCreated = false
 }
 
 function MainModule.ToggleSpikesKill(enabled)
@@ -3349,7 +3952,6 @@ function MainModule.ToggleSpikesKill(enabled)
         return
     end
     
-    -- Отключаем все соединения
     if MainModule.SpikesKillFeature.AnimationConnection then
         MainModule.SpikesKillFeature.AnimationConnection:Disconnect()
         MainModule.SpikesKillFeature.AnimationConnection = nil
@@ -3367,83 +3969,88 @@ function MainModule.ToggleSpikesKill(enabled)
         MainModule.SpikesKillFeature.AnimationCheckConnection = nil
     end
     
-    -- Очищаем соединения для остановки анимаций
     for _, conn in ipairs(MainModule.SpikesKillFeature.AnimationStoppedConnections) do
         pcall(function() conn:Disconnect() end)
     end
     MainModule.SpikesKillFeature.AnimationStoppedConnections = {}
     
-    -- Сбрасываем состояние
+    if MainModule.SpikesKillFeature.PlatformPart then
+        pcall(function() MainModule.SpikesKillFeature.PlatformPart:Destroy() end)
+        MainModule.SpikesKillFeature.PlatformPart = nil
+    end
+    MainModule.SpikesKillFeature.PlatformCreated = false
+    
     MainModule.SpikesKillFeature.OriginalCFrame = nil
     MainModule.SpikesKillFeature.ActiveAnimation = false
     MainModule.SpikesKillFeature.AnimationStartTime = 0
     MainModule.SpikesKillFeature.TrackedAnimations = {}
     MainModule.SpikesKillFeature.NoKnifeTimer = 0
+    MainModule.SpikesKillFeature.SpikesPosition = nil
     
-    -- Если функция отключается
     if not enabled then
-        -- Восстанавливаем шипы, если они были удалены
-        if MainModule.SpikesKillFeature.SpikesRemoved then
-            pcall(function()
-                local hideAndSeekMap = workspace:FindFirstChild("HideAndSeekMap")
-                local killingParts = hideAndSeekMap and hideAndSeekMap:FindFirstChild("KillingParts")
-                if killingParts then
-                    -- Очищаем существующие шипы
-                    for _, child in pairs(killingParts:GetChildren()) do
-                        if child:IsA("BasePart") then
-                            child:Destroy()
-                        end
-                    end
-                    
-                    -- Восстанавливаем оригинальные шипы
-                    for _, spike in ipairs(MainModule.SpikesKillFeature.OriginalSpikes) do
-                        spike:Clone().Parent = killingParts
-                    end
-                end
-                MainModule.SpikesKillFeature.SpikesRemoved = false
-                MainModule.SpikesKillFeature.OriginalSpikes = {}
-            end)
-        end
-        
         MainModule.ShowNotification("Spikes Kill", "Disabled", 2)
         MainModule.SpikesKillFeature.Enabled = false
         return
     end
     
-    -- Удаляем шипы для предотвращения настоящих убийств
     pcall(function()
         local hideAndSeekMap = workspace:FindFirstChild("HideAndSeekMap")
         local killingParts = hideAndSeekMap and hideAndSeekMap:FindFirstChild("KillingParts")
         if killingParts then
-            MainModule.SpikesKillFeature.OriginalSpikes = {}
             for _, spike in pairs(killingParts:GetChildren()) do
                 if spike:IsA("BasePart") then
-                    table.insert(MainModule.SpikesKillFeature.OriginalSpikes, spike:Clone())
                     if not MainModule.SpikesKillFeature.SpikesPosition then
                         MainModule.SpikesKillFeature.SpikesPosition = spike.Position
                     end
                     spike:Destroy()
                 end
             end
-            MainModule.SpikesKillFeature.SpikesRemoved = true
         end
     end)
     
-    -- Функция телепортации к шипам
-    local function teleportToSpikes(character)
+    local function createSafetyPlatform()
+        if MainModule.SpikesKillFeature.PlatformCreated then return end
+        if not MainModule.SpikesKillFeature.SpikesPosition then return end
+        
+        pcall(function()
+            local platform = Instance.new("Part")
+            platform.Name = "SafetyPlatform"
+            platform.Size = Vector3.new(20, 1, 20)
+            platform.Position = MainModule.SpikesKillFeature.SpikesPosition + Vector3.new(0, MainModule.SpikesKillFeature.PlatformHeightOffset, 0)
+            platform.Anchored = true
+            platform.CanCollide = true
+            platform.Transparency = 1
+            platform.Color = Color3.fromRGB(0, 255, 0)
+            
+            local collision = Instance.new("BoolValue")
+            collision.Name = "SafePlatform"
+            collision.Value = true
+            collision.Parent = platform
+            
+            platform.Parent = workspace
+            
+            MainModule.SpikesKillFeature.PlatformPart = platform
+            MainModule.SpikesKillFeature.PlatformCreated = true
+        end)
+    end
+    
+    local function teleportToSafetyPlatform(character)
         if not character or not character:FindFirstChild("HumanoidRootPart") then
             return
         end
         
-        local spikesPosition = MainModule.SpikesKillFeature.SpikesPosition
-        if spikesPosition then
+        if not MainModule.SpikesKillFeature.PlatformCreated then
+            createSafetyPlatform()
+        end
+        
+        if MainModule.SpikesKillFeature.SpikesPosition and MainModule.SpikesKillFeature.PlatformPart then
             MainModule.SpikesKillFeature.OriginalCFrame = character:GetPrimaryPartCFrame()
-            local targetPosition = spikesPosition + Vector3.new(0, MainModule.SpikesKillFeature.PlatformHeightOffset, 0)
+            
+            local targetPosition = MainModule.SpikesKillFeature.PlatformPart.Position + Vector3.new(0, 3, 0)
             character:SetPrimaryPartCFrame(CFrame.new(targetPosition))
         end
     end
     
-    -- Функция возврата на исходную позицию
     local function returnToOriginalPosition(character)
         if not character or not character:FindFirstChild("HumanoidRootPart") then
             return
@@ -3455,7 +4062,6 @@ function MainModule.ToggleSpikesKill(enabled)
         end
     end
     
-    -- Проверка, является ли анимация анимацией убийства
     local function isKillAnimation(animationId)
         for _, id in ipairs(MainModule.SpikesKillFeature.AnimationIds) do
             if animationId == id then
@@ -3465,7 +4071,6 @@ function MainModule.ToggleSpikesKill(enabled)
         return false
     end
     
-    -- Настройка обработки анимаций для персонажа
     local function setupCharacter(char)
         local humanoid = char:WaitForChild("Humanoid")
         
@@ -3479,7 +4084,7 @@ function MainModule.ToggleSpikesKill(enabled)
                     MainModule.SpikesKillFeature.ActiveAnimation = true
                     MainModule.SpikesKillFeature.AnimationStartTime = tick()
                     
-                    teleportToSpikes(char)
+                    teleportToSafetyPlatform(char)
                     
                     local stoppedConn = track.Stopped:Connect(function()
                         task.wait(MainModule.SpikesKillFeature.ReturnDelay)
@@ -3496,19 +4101,16 @@ function MainModule.ToggleSpikesKill(enabled)
         end)
     end
     
-    -- Настраиваем для текущего персонажа
     local char = LocalPlayer.Character
     if char then
         setupCharacter(char)
     end
     
-    -- Настраиваем для будущих персонажей
     MainModule.SpikesKillFeature.CharacterAddedConnection = LocalPlayer.CharacterAdded:Connect(function(newChar)
         task.wait(1)
         setupCharacter(newChar)
     end)
     
-    -- Проверка безопасности
     MainModule.SpikesKillFeature.SafetyCheckConnection = RunService.Heartbeat:Connect(function()
         if not MainModule.SpikesKillFeature.Enabled then 
             if MainModule.SpikesKillFeature.SafetyCheckConnection then
@@ -3518,14 +4120,19 @@ function MainModule.ToggleSpikesKill(enabled)
             return 
         end
         
-        -- Проверяем, активна ли игра
         if not IsGameActive("HideAndSeek") then
             MainModule.SpikesKillFeature.Enabled = false
             MainModule.ShowNotification("Spikes Kill", "Game ended - disabled", 2)
             return
         end
         
-        -- Таймаут для анимации (на всякий случай)
+        if MainModule.SpikesKillFeature.PlatformCreated and 
+           (not MainModule.SpikesKillFeature.PlatformPart or not MainModule.SpikesKillFeature.PlatformPart.Parent) then
+            MainModule.SpikesKillFeature.PlatformCreated = false
+            MainModule.SpikesKillFeature.PlatformPart = nil
+            createSafetyPlatform()
+        end
+        
         if MainModule.SpikesKillFeature.ActiveAnimation and tick() - MainModule.SpikesKillFeature.AnimationStartTime >= 10 then
             local character = GetCharacter()
             if character and MainModule.SpikesKillFeature.OriginalCFrame then
@@ -3538,8 +4145,9 @@ function MainModule.ToggleSpikesKill(enabled)
     
     MainModule.SpikesKillFeature.Enabled = true
     MainModule.ShowNotification("Spikes Kill", "Enabled", 2)
+    
+    createSafetyPlatform()
 end
-
 
 MainModule.AutoGonggi = {
     Enabled = false,
