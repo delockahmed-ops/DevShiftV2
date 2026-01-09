@@ -3974,7 +3974,7 @@ local function isLookingAtPlayer(targetPlayer, localPlayer)
     local directionToLocal = (localRoot.Position - targetHead.Position).Unit
     local lookVector = targetHead.CFrame.LookVector
     
-    return directionToLocal:Dot(lookVector) > 0.67
+    return directionToLocal:Dot(lookVector) > -0.6
 end
 
 -- ============ МГНОВЕННАЯ ОБРАБОТКА ЧЕРЕЗ HEARTBEAT ============
