@@ -465,7 +465,7 @@ MainModule.Killaura = {
     
     -- УЛЬТРА-БЫСТРЫЕ ПАРАМЕТРЫ
     BehindDistance = 2,
-    FrontDistance = 17,
+    FrontDistance = 14,
     SpeedThreshold = 18,
     
     -- МАКСИМАЛЬНАЯ СКОРОСТЬ И ПЛАВНОСТЬ
