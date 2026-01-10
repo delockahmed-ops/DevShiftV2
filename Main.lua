@@ -461,7 +461,7 @@ function MainModule.GetHider()
     return nil
 end
 
--- ULTRA SMOOTH KILLAURA v6.2 - СИНХРОННАЯ ВЕРСИЯ (АНТИ-БАН)
+-- ULTRA SMOOTH KILLAURA v6.3 - СИНХРОННАЯ ВЕРСИЯ (ИСПРАВЛЕНА ПОТЕРЯ ЦЕЛИ)
 MainModule.Killaura = {
     Enabled = false,
     TeleportAnimations = {
@@ -492,6 +492,11 @@ MainModule.Killaura = {
     FrontDistance = 18,
     SpeedThreshold = 18,
     
+    -- ИСПРАВЛЕННЫЕ ПАРАМЕТРЫ ДЛЯ УДЕРЖАНИЯ ЦЕЛИ
+    MaxDistance = 350,  -- Увеличенный диапазон
+    TeleportSearchRange = 500,  -- Диапазон поиска для телепортации
+    LostTargetDelay = 0.3,  -- Задержка перед потерей цели
+    
     -- ПАРАМЕТРЫ ДВИЖЕНИЯ - РАЗНЫЕ ДЛЯ РАЗНЫХ ИГР
     -- Для LightsOut - более плавные настройки
     MovementSpeed = 160,
@@ -508,9 +513,10 @@ MainModule.Killaura = {
     
     -- ПАРАМЕТРЫ ТЕЛЕПОРТАЦИИ (отключается для LightsOut)
     SyncMovement = true,
-    MaxSyncDistance = 25,
-    TeleportThreshold = 15,
+    MaxSyncDistance = 30,  -- Увеличено
+    TeleportThreshold = 20,  -- Увеличено
     MovementStyle = "sync",
+    InstantTeleportCooldown = 1.0,  -- Кулдаун на телепорт
     
     -- ВНУТРЕННИЕ ПЕРЕМЕННЫЕ
     LastPosition = Vector3.new(),
@@ -554,22 +560,25 @@ MainModule.Killaura = {
     
     -- ПАРАМЕТРЫ ДЛЯ LightsOut (более плавные)
     LightsOutSettings = {
-        MovementSpeed = 120,  -- Уменьшенная скорость для плавности
-        MaxVelocity = 180,    -- Уменьшенная максимальная скорость
-        Smoothness = 0.95,    -- Более плавное движение
-        TeleportThreshold = 100, -- Очень большой порог, чтобы телепорты почти не работали
-        FrontDistance = 15,   -- Расстояние впереди для LightsOut
-        BehindDistance = 3,   -- Расстояние сзади для LightsOut
+        MovementSpeed = 120,
+        MaxVelocity = 180,
+        Smoothness = 0.95,
+        TeleportThreshold = 100,
+        FrontDistance = 15,
+        BehindDistance = 3,
+        MaxDistance = 400,  -- Увеличен для LightsOut
     },
     
-    -- Переменные для стабильности
+    -- УЛУЧШЕННЫЕ ПЕРЕМЕННЫЕ ДЛЯ СТАБИЛЬНОСТИ
     TargetStabilityCounter = 0,
-    MaxStabilityCount = 20,
+    MaxStabilityCount = 35,  -- Увеличен
     LastTargetDistance = 0,
     LostTargetFrames = 0,
-    MaxLostFrames = 8,
+    MaxLostFrames = 20,  -- Увеличен
     ShouldMaintainTarget = true,
     TeleportCooldown = 0,
+    LastTargetUpdateTime = 0,
+    TargetUpdateInterval = 0.1,
     
     -- Переменные для синхронного движения
     SyncPosition = Vector3.new(),
@@ -577,11 +586,18 @@ MainModule.Killaura = {
     IsInSyncMode = false,
     LastSyncTime = 0,
     
-    -- НОВЫЕ ПЕРЕМЕННЫЕ ДЛЯ ФИКСА ОШИБКИ С ПЕРЕДНЕЙ ПОЗИЦИЕЙ
+    -- НОВЫЕ ПЕРЕМЕННЫЕ ДЛЯ УДЕРЖАНИЯ ЦЕЛИ
+    TargetRetentionTime = 0,
+    MaxRetentionTime = 2.0,  -- Максимальное время удержания цели
+    LastValidTargetPosition = Vector3.new(),
+    IsTeleportingToTarget = false,
+    TeleportInProgress = false,
+    
+    -- Параметры для плавного восстановления
     LastMovementDirection = "idle",
     LastSpeedCheck = 0,
-    MinSpeedForFront = 18,  -- МИНИМАЛЬНАЯ СКОРОСТЬ ДЛЯ ПЕРЕДНЕЙ ПОЗИЦИИ
-    RequiredDirection = "forward"  -- Требуемое направление для передней позиции
+    MinSpeedForFront = 18,
+    RequiredDirection = "forward"
 }
 
 -- Инициализация анимаций
@@ -595,7 +611,6 @@ local function getGameSettings()
     local currentGame = GetCurrentGame()
     
     if currentGame == "LightsOut" then
-        -- Возвращаем настройки для LightsOut
         return {
             MovementSpeed = config.LightsOutSettings.MovementSpeed,
             MaxVelocity = config.LightsOutSettings.MaxVelocity,
@@ -605,10 +620,10 @@ local function getGameSettings()
             BehindDistance = config.LightsOutSettings.BehindDistance,
             SpeedThreshold = config.SpeedThreshold,
             RotationSpeed = config.RotationSpeed,
-            JumpSyncSmoothness = config.JumpSyncSmoothness
+            JumpSyncSmoothness = config.JumpSyncSmoothness,
+            MaxDistance = config.LightsOutSettings.MaxDistance or config.MaxDistance
         }
     else
-        -- Стандартные настройки для всех других игр
         return {
             MovementSpeed = config.MovementSpeed,
             MaxVelocity = config.MaxVelocity,
@@ -618,12 +633,13 @@ local function getGameSettings()
             BehindDistance = config.BehindDistance,
             SpeedThreshold = config.SpeedThreshold,
             RotationSpeed = config.RotationSpeed,
-            JumpSyncSmoothness = config.JumpSyncSmoothness
+            JumpSyncSmoothness = config.JumpSyncSmoothness,
+            MaxDistance = config.MaxDistance
         }
     end
 end
 
--- НОВАЯ ФУНКЦИЯ: Проверка анимации отключения (ИСПРАВЛЕННАЯ)
+-- НОВАЯ ФУНКЦИЯ: Проверка анимации отключения
 local function checkDisableAnimation(targetPlayer)
     if not targetPlayer then return false end
     
@@ -633,7 +649,6 @@ local function checkDisableAnimation(targetPlayer)
     local humanoid = character:FindFirstChildOfClass("Humanoid")
     if not humanoid then return false end
     
-    -- Используем GetPlayingAnimationTracks для более точного определения
     local animator = character:FindFirstChildOfClass("Humanoid"):FindFirstChildOfClass("Animator")
     if not animator then return false end
     
@@ -655,7 +670,7 @@ local function checkDisableAnimation(targetPlayer)
 end
 
 -- УЛУЧШЕННЫЙ поиск игрока с учетом HideAndSeek
-local function findClosestPlayer(forceNewTarget)
+local function findClosestPlayer(forceNewTarget, maxDistance)
     local players = game:GetService("Players")
     local localPlayer = players.LocalPlayer
     if not localPlayer then return nil end
@@ -678,7 +693,7 @@ local function findClosestPlayer(forceNewTarget)
             
             if targetRoot and humanoid and humanoid.Health > 0 then
                 local distance = (targetRoot.Position - myPos).Magnitude
-                if distance <= 250 then
+                if distance <= (maxDistance or config.MaxDistance) then
                     return config.CurrentTarget
                 end
             end
@@ -690,18 +705,15 @@ local function findClosestPlayer(forceNewTarget)
     
     -- ЛОГИКА ДЛЯ HIDE AND SEEK
     if currentGame == "HideAndSeek" then
-        -- Проверяем нашу роль
         local isLocalSeeker = IsSeeker(localPlayer)
         local isLocalHider = IsHider(localPlayer)
         
         if isLocalSeeker then
-            -- Если мы Seeker - ищем только Hider
             local closestPlayer = nil
             local closestDistance = math.huge
             
             for _, player in pairs(players:GetPlayers()) do
                 if player ~= localPlayer and player.Character then
-                    -- Проверяем, является ли игрок Hider
                     if IsHider(player) then
                         local targetChar = player.Character
                         local targetRoot = targetChar:FindFirstChild("HumanoidRootPart")
@@ -709,7 +721,8 @@ local function findClosestPlayer(forceNewTarget)
                         
                         if targetRoot and humanoid and humanoid.Health > 0 then
                             local distance = (targetRoot.Position - myPos).Magnitude
-                            if distance < closestDistance and distance <= 250 then
+                            local maxDist = maxDistance or config.MaxDistance
+                            if distance < closestDistance and distance <= maxDist then
                                 closestDistance = distance
                                 closestPlayer = player
                             end
@@ -721,13 +734,11 @@ local function findClosestPlayer(forceNewTarget)
             return closestPlayer
             
         elseif isLocalHider then
-            -- Если мы Hider - ищем только Seeker
             local closestPlayer = nil
             local closestDistance = math.huge
             
             for _, player in pairs(players:GetPlayers()) do
                 if player ~= localPlayer and player.Character then
-                    -- Проверяем, является ли игрок Seeker
                     if IsSeeker(player) then
                         local targetChar = player.Character
                         local targetRoot = targetChar:FindFirstChild("HumanoidRootPart")
@@ -735,7 +746,8 @@ local function findClosestPlayer(forceNewTarget)
                         
                         if targetRoot and humanoid and humanoid.Health > 0 then
                             local distance = (targetRoot.Position - myPos).Magnitude
-                            if distance < closestDistance and distance <= 250 then
+                            local maxDist = maxDistance or config.MaxDistance
+                            if distance < closestDistance and distance <= maxDist then
                                 closestDistance = distance
                                 closestPlayer = player
                             end
@@ -747,11 +759,10 @@ local function findClosestPlayer(forceNewTarget)
             return closestPlayer
         end
         
-        -- Если роль не определена, возвращаем nil
         return nil
     end
     
-    -- ДЛЯ ВСЕХ ДРУГИХ ИГР - стандартная логика
+    -- ДЛЯ ВСЕХ ДРУГИХ ИГР
     local closestPlayer = nil
     local closestDistance = math.huge
     
@@ -763,7 +774,8 @@ local function findClosestPlayer(forceNewTarget)
             
             if targetRoot and humanoid and humanoid.Health > 0 then
                 local distance = (targetRoot.Position - myPos).Magnitude
-                if distance < closestDistance and distance <= 250 then
+                local maxDist = maxDistance or config.MaxDistance
+                if distance < closestDistance and distance <= maxDist then
                     closestDistance = distance
                     closestPlayer = player
                 end
@@ -772,6 +784,86 @@ local function findClosestPlayer(forceNewTarget)
     end
     
     return closestPlayer
+end
+
+-- УЛУЧШЕННАЯ проверка цели (МЕНЬШЕ СБРОСОВ)
+local function checkAndSwitchTarget()
+    local config = MainModule.Killaura
+    
+    if not config.Enabled or config.ShouldDisableForAnimation then 
+        config.LostTargetFrames = 0
+        config.TargetRetentionTime = 0
+        return false 
+    end
+    
+    local currentTarget = config.CurrentTarget
+    
+    if currentTarget then
+        local targetChar = currentTarget.Character
+        if not targetChar then 
+            config.LostTargetFrames = config.LostTargetFrames + 1
+            -- Даем больше времени на восстановление
+            return config.LostTargetFrames < config.MaxLostFrames * 2
+        end
+        
+        local humanoid = targetChar:FindFirstChildOfClass("Humanoid")
+        if not humanoid or humanoid.Health <= 0 then 
+            config.LostTargetFrames = config.LostTargetFrames + 1
+            return config.LostTargetFrames < config.MaxLostFrames * 1.5
+        end
+        
+        local localPlayer = game:GetService("Players").LocalPlayer
+        if localPlayer and localPlayer.Character then
+            local localRoot = localPlayer.Character:FindFirstChild("HumanoidRootPart")
+            local targetRoot = targetChar:FindFirstChild("HumanoidRootPart")
+            
+            if localRoot and targetRoot then
+                local distance = (targetRoot.Position - localRoot.Position).Magnitude
+                local settings = getGameSettings()
+                
+                -- УВЕЛИЧЕННЫЙ ДИАПАЗОН ДЛЯ УДЕРЖАНИЯ ЦЕЛИ
+                if distance > settings.MaxDistance then 
+                    config.LostTargetFrames = config.LostTargetFrames + 1
+                    
+                    -- Пытаемся телепортироваться к далекой цели
+                    if distance > settings.MaxDistance and distance < config.TeleportSearchRange then
+                        if not config.IsTeleportingToTarget and tick() - config.LastTargetUpdateTime > 1.0 then
+                            config.IsTeleportingToTarget = true
+                            config.LastValidTargetPosition = targetRoot.Position
+                            
+                            -- Телепорт к далекой цели
+                            local targetLook = targetRoot.CFrame.LookVector
+                            local attachmentType, desiredDistance = getSmartPositioning(targetRoot)
+                            local desiredOffset = (attachmentType == "front") and (targetLook * desiredDistance) or (-targetLook * desiredDistance)
+                            local teleportPos = targetRoot.Position + desiredOffset
+                            
+                            localRoot.CFrame = CFrame.new(teleportPos, targetRoot.Position)
+                            config.CurrentVelocity = Vector3.new(0, 0, 0)
+                            config.LastTargetUpdateTime = tick()
+                            config.IsTeleportingToTarget = false
+                            
+                            print("Телепорт к далекой цели: " .. distance .. " studs")
+                            return true
+                        end
+                    end
+                    
+                    return config.LostTargetFrames < config.MaxLostFrames
+                end
+                
+                -- Цель валидна
+                config.LostTargetFrames = 0
+                config.TargetRetentionTime = math.min(config.TargetRetentionTime + 0.1, config.MaxRetentionTime)
+                config.TargetStabilityCounter = math.min(config.TargetStabilityCounter + 1, config.MaxStabilityCount)
+                config.LastTargetDistance = distance
+                config.LastValidTargetPosition = targetRoot.Position
+            end
+        end
+        
+        return true
+    end
+    
+    config.LostTargetFrames = config.LostTargetFrames + 1
+    return config.LostTargetFrames < config.MaxLostFrames
 end
 
 -- МГНОВЕННАЯ проверка анимаций
@@ -809,11 +901,9 @@ local function checkTargetJumping(targetRoot)
     local config = MainModule.Killaura
     local currentTime = tick()
     
-    -- Определяем прыжок по вертикальной скорости
     local isJumpingNow = targetRoot.Velocity.Y > 10
     
     if isJumpingNow and not config.JumpData.TargetJumping then
-        -- Начало прыжка
         config.JumpData.TargetJumping = true
         config.JumpData.JumpStartY = targetRoot.Position.Y
         config.JumpData.JumpPeakReached = false
@@ -822,19 +912,15 @@ local function checkTargetJumping(targetRoot)
         config.JumpSync = true
         config.IsJumping = true
         
-        -- Сохраняем текущую позицию для прыжка
         config.JumpStartPosition = targetRoot.Position
         
     elseif config.JumpData.TargetJumping then
-        -- Обновление прыжка
         config.JumpData.JumpDuration = currentTime - config.JumpData.JumpStartTime
         
-        -- Проверяем пик прыжка
         if targetRoot.Velocity.Y < 2 and not config.JumpData.JumpPeakReached then
             config.JumpData.JumpPeakReached = true
         end
         
-        -- Проверяем окончание прыжка
         if math.abs(targetRoot.Velocity.Y) < 2 and 
            math.abs(targetRoot.Position.Y - config.JumpData.JumpStartY) < 3 then
             config.JumpData.TargetJumping = false
@@ -847,42 +933,35 @@ local function checkTargetJumping(targetRoot)
     return config.JumpData.TargetJumping
 end
 
--- ИСПРАВЛЕННАЯ функция определения направления движения (БОЛЕЕ ТОЧНАЯ)
+-- ИСПРАВЛЕННАЯ функция определения направления движения
 local function getTargetMovementDirection(targetRoot)
     if not targetRoot then return "idle" end
     
     local targetVel = targetRoot.Velocity
     local targetLook = targetRoot.CFrame.LookVector
     
-    -- Берем только горизонтальную скорость
     local horizontalVel = Vector3.new(targetVel.X, 0, targetVel.Z)
     local horizontalSpeed = horizontalVel.Magnitude
     
-    -- Сохраняем последнюю проверку скорости
     MainModule.Killaura.LastSpeedCheck = horizontalSpeed
     
-    -- Если скорость меньше порога - считаем что стоит
     if horizontalSpeed < 2.5 then
         MainModule.Killaura.LastMovementDirection = "idle"
         return "idle"
     end
     
-    -- Нормализуем векторы
     local lookDirection = Vector3.new(targetLook.X, 0, targetLook.Z).Unit
     local moveDirection = horizontalVel.Unit
     
-    -- Вычисляем скалярное произведение
     local dotProduct = lookDirection:Dot(moveDirection)
     
     local direction
     
-    -- Более точные пороги для определения направления
     if dotProduct > 0.7 then
         direction = "forward"
     elseif dotProduct < -0.7 then
         direction = "backward"
     elseif math.abs(dotProduct) < 0.3 then
-        -- Определяем в какую сторону
         local crossProduct = lookDirection:Cross(moveDirection)
         if crossProduct.Y > 0 then
             direction = "right"
@@ -905,61 +984,39 @@ local function getSmartPositioning(targetRoot)
         return config.JumpStartAttachment or "behind", config.JumpStartDistance or config.BehindDistance
     end
     
-    -- Получаем настройки для текущей игры
     local settings = getGameSettings()
     
     local targetVel = targetRoot.Velocity
     local horizontalVel = Vector3.new(targetVel.X, 0, targetVel.Z)
     local horizontalSpeed = horizontalVel.Magnitude
     
-    -- Сохраняем скорость для отладки
     config.LastSpeedCheck = horizontalSpeed
     
-    -- Если прыгаем - используем запомненное позиционирование
     if config.IsJumping then
         return config.JumpStartAttachment, config.JumpStartDistance
     end
     
-    -- Если в режиме подъема - сохраняем позиционирование
     if config.AnimationLiftActive and config.WasInFrontBeforeLift then
         return "front", settings.FrontDistance
     end
     
-    -- Определяем направление движения цели
     local movementDir = getTargetMovementDirection(targetRoot)
     
-    -- ДЕБАГ: Выводим информацию о скорости и направлении
-    print("Скорость цели:", horizontalSpeed, "Направление:", movementDir)
-    
-    -- ИСПРАВЛЕННОЕ УСЛОВИЕ: Проверяем скорость И направление
     if horizontalSpeed >= config.MinSpeedForFront and movementDir == "forward" then
-        -- Если скорость >= 18 И цель движется ВПЕРЕД - становимся спереди
         config.JumpStartAttachment = "front"
         config.JumpStartDistance = settings.FrontDistance
-        print("Устанавливаем позицию: FRONT (скорость хорошая и направление вперед)")
         return "front", settings.FrontDistance
     else
-        -- Все остальные случаи - сзади
         config.JumpStartAttachment = "behind"
         config.JumpStartDistance = settings.BehindDistance
-        
-        if horizontalSpeed < config.MinSpeedForFront then
-            print("Устанавливаем позицию: BEHIND (скорость меньше " .. config.MinSpeedForFront .. ")")
-        elseif movementDir ~= "forward" then
-            print("Устанавливаем позицию: BEHIND (направление не 'forward', а '" .. movementDir .. "')")
-        else
-            print("Устанавливаем позицию: BEHIND (неизвестная причина)")
-        end
-        
         return "behind", settings.BehindDistance
     end
 end
 
--- НОВАЯ ФУНКЦИЯ: ОБРАБОТКА ОТКЛЮЧЕНИЯ ПО АНИМАЦИИ (ПОЛНОСТЬЮ ПЕРЕРАБОТАННАЯ)
+-- ОБРАБОТКА ОТКЛЮЧЕНИЯ ПО АНИМАЦИИ
 local function handleDisableAnimation(targetPlayer)
     local config = MainModule.Killaura
     
-    -- Если киллаура выключена - не реагируем на анимацию
     if not config.Enabled then
         config.ShouldDisableForAnimation = false
         config.IsDisabledByAnimation = false
@@ -971,12 +1028,10 @@ local function handleDisableAnimation(targetPlayer)
     local currentTime = tick()
     local shouldDisable = checkDisableAnimation(targetPlayer)
     
-    -- Проверяем кулдаун
     if currentTime - config.LastDisableTime < config.DisableAnimationCooldown then
         return config.IsDisabledByAnimation
     end
     
-    -- Если обнаружена анимация отключения и киллаура включен
     if shouldDisable and config.Enabled and not config.IsDisabledByAnimation then
         print("Обнаружена анимация отключения! Отключаем киллауру...")
         config.WasEnabledBeforeAnimation = true
@@ -984,14 +1039,12 @@ local function handleDisableAnimation(targetPlayer)
         config.ShouldDisableForAnimation = true
         config.LastDisableTime = currentTime
         
-        -- Сбрасываем цель
         config.CurrentTarget = nil
         config.IsAttached = false
         
         return true
     end
     
-    -- Если анимация закончилась И киллаура был отключен из-за нее
     if not shouldDisable and config.IsDisabledByAnimation and config.WasEnabledBeforeAnimation then
         print("Анимация отключения закончилась! Восстанавливаем киллауру...")
         
@@ -999,8 +1052,7 @@ local function handleDisableAnimation(targetPlayer)
         config.ShouldDisableForAnimation = false
         config.LastDisableTime = currentTime
         
-        -- Восстанавливаем поиск цели после короткой паузы
-        task.delay(0.1, function()
+        task.delay(config.LostTargetDelay, function()
             if config.Enabled then
                 local closestPlayer = findClosestPlayer(true)
                 if closestPlayer then
@@ -1018,42 +1070,34 @@ local function handleDisableAnimation(targetPlayer)
     return config.IsDisabledByAnimation
 end
 
--- ИСПРАВЛЕННАЯ функция синхронного движения (С РАЗНЫМИ НАСТРОЙКАМИ ДЛЯ ИГР)
+-- УЛУЧШЕННАЯ функция синхронного движения (С ЛУЧШИМ УДЕРЖАНИЕМ ЦЕЛИ)
 local function syncMovement(localRoot, targetPos, targetLook, deltaTime, isAnimationLift)
     local config = MainModule.Killaura
     
-    -- Проверяем отключение по анимации
     if config.ShouldDisableForAnimation then
-        -- Останавливаем движение при отключении
         config.CurrentVelocity = Vector3.new(0, 0, 0)
         localRoot.Velocity = config.CurrentVelocity
         return
     end
     
-    -- Получаем цель для позиционирования
     local targetRoot = nil
     if config.CurrentTarget and config.CurrentTarget.Character then
         targetRoot = config.CurrentTarget.Character:FindFirstChild("HumanoidRootPart")
     end
     
-    -- Получаем настройки для текущей игры
     local settings = getGameSettings()
     local currentGame = GetCurrentGame()
     
-    -- УМНОЕ ПОЗИЦИОНИРОВАНИЕ
     local attachmentType, desiredDistance = getSmartPositioning(targetRoot)
     
-    -- При подъеме сохраняем позиционирование
     if isAnimationLift and config.WasInFrontBeforeLift then
         attachmentType = "front"
         desiredDistance = settings.FrontDistance
     end
     
-    -- Вычисляем целевую позицию
     local desiredOffset = (attachmentType == "front") and (targetLook * desiredDistance) or (-targetLook * desiredDistance)
     local targetGroundPos = targetPos + desiredOffset
     
-    -- Если поднятие при анимации - добавляем высоту
     if isAnimationLift then
         targetGroundPos = Vector3.new(
             targetGroundPos.X,
@@ -1062,7 +1106,6 @@ local function syncMovement(localRoot, targetPos, targetLook, deltaTime, isAnima
         )
     end
     
-    -- Синхронизация высоты при прыжке
     if config.IsJumping and targetRoot then
         targetGroundPos = Vector3.new(
             targetGroundPos.X,
@@ -1071,50 +1114,32 @@ local function syncMovement(localRoot, targetPos, targetLook, deltaTime, isAnima
         )
     end
     
-    -- РЕЖИМ ДВИЖЕНИЯ В ЗАВИСИМОСТИ ОТ ИГРЫ
     local currentPos = localRoot.Position
     local direction = targetGroundPos - currentPos
     local distance = direction.Magnitude
     
-    -- ДЛЯ LIGHTSOUT: МЕНЬШЕ ТЕЛЕПОРТОВ, БОЛЬШЕ ПЛАВНОСТИ
-    if currentGame == "LightsOut" then
-        -- В LightsOut используем минимальную телепортацию
-        if distance > 50 then  -- Только при очень большом расстоянии
-            if config.TeleportCooldown <= 0 then
-                localRoot.CFrame = CFrame.new(targetGroundPos, targetPos)
-                config.CurrentVelocity = Vector3.new(0, 0, 0)
-                config.TeleportCooldown = 0.5
-                return
-            end
-        end
-    else
-        -- ДЛЯ ДРУГИХ ИГР: СТАНДАРТНАЯ ЛОГИКА С ТЕЛЕПОРТАМИ
-        if distance > settings.TeleportThreshold then
-            if config.TeleportCooldown <= 0 then
-                localRoot.CFrame = CFrame.new(targetGroundPos, targetPos)
-                config.CurrentVelocity = Vector3.new(0, 0, 0)
-                config.TeleportCooldown = config.InstantTeleportCooldown
-                return
-            end
+    -- УЛУЧШЕННАЯ ТЕЛЕПОРТАЦИЯ ДЛЯ ДАЛЕКИХ ЦЕЛЕЙ
+    if distance > settings.TeleportThreshold * 2 then
+        if config.TeleportCooldown <= 0 then
+            localRoot.CFrame = CFrame.new(targetGroundPos, targetPos)
+            config.CurrentVelocity = Vector3.new(0, 0, 0)
+            config.TeleportCooldown = 1.5
+            config.LastTargetUpdateTime = tick()
+            print("Экстренный телепорт к цели: " .. distance .. " studs")
+            return
         end
     end
     
-    -- ПЛАВНОЕ ПРИБЛИЖЕНИЕ
-    if distance > 2 then
-        local targetSpeed = math.min(settings.MovementSpeed, distance * 12)
-        
-        -- Разный уровень плавности для разных игр
-        local smoothnessFactor = settings.Smoothness
-        
+    -- БЫСТРОЕ ПРИБЛИЖЕНИЕ К ДАЛЕКИМ ЦЕЛЯМ
+    if distance > settings.MaxDistance * 0.7 then
+        local targetSpeed = settings.MovementSpeed * 1.5
         local targetVelocity = direction.Unit * targetSpeed
-        config.CurrentVelocity = config.CurrentVelocity:Lerp(targetVelocity, 0.7)
+        config.CurrentVelocity = targetVelocity:Lerp(targetVelocity, 0.9)
         
-        -- ОГРАНИЧЕНИЕ СКОРОСТИ
-        if config.CurrentVelocity.Magnitude > settings.MaxVelocity then
-            config.CurrentVelocity = config.CurrentVelocity.Unit * settings.MaxVelocity
+        if config.CurrentVelocity.Magnitude > settings.MaxVelocity * 1.2 then
+            config.CurrentVelocity = config.CurrentVelocity.Unit * settings.MaxVelocity * 1.2
         end
         
-        -- ДВИЖЕНИЕ
         local moveStep = config.CurrentVelocity * deltaTime
         
         if moveStep.Magnitude > distance then
@@ -1123,23 +1148,49 @@ local function syncMovement(localRoot, targetPos, targetLook, deltaTime, isAnima
         
         local newPos = currentPos + moveStep
         
-        -- Фиксация высоты при подъеме
         if isAnimationLift then
             local targetHeight = config.OriginalGroundHeight + config.LiftHeight
             newPos = Vector3.new(newPos.X, targetHeight, newPos.Z)
         end
         
-        -- ПЛАВНЫЙ ПОВОРОТ
+        local lookAtPos = Vector3.new(targetPos.X, newPos.Y, targetPos.Z)
+        local targetCF = CFrame.new(newPos, lookAtPos)
+        
+        localRoot.CFrame = localRoot.CFrame:Lerp(targetCF, 0.8)
+        localRoot.Velocity = config.CurrentVelocity
+        
+    -- НОРМАЛЬНОЕ ПРИБЛИЖЕНИЕ
+    elseif distance > 2 then
+        local targetSpeed = math.min(settings.MovementSpeed, distance * 10)
+        local smoothnessFactor = settings.Smoothness
+        
+        local targetVelocity = direction.Unit * targetSpeed
+        config.CurrentVelocity = config.CurrentVelocity:Lerp(targetVelocity, 0.7)
+        
+        if config.CurrentVelocity.Magnitude > settings.MaxVelocity then
+            config.CurrentVelocity = config.CurrentVelocity.Unit * settings.MaxVelocity
+        end
+        
+        local moveStep = config.CurrentVelocity * deltaTime
+        
+        if moveStep.Magnitude > distance then
+            moveStep = direction
+        end
+        
+        local newPos = currentPos + moveStep
+        
+        if isAnimationLift then
+            local targetHeight = config.OriginalGroundHeight + config.LiftHeight
+            newPos = Vector3.new(newPos.X, targetHeight, newPos.Z)
+        end
+        
         local lookAtPos = Vector3.new(targetPos.X, newPos.Y, targetPos.Z)
         local targetCF = CFrame.new(newPos, lookAtPos)
         
         localRoot.CFrame = localRoot.CFrame:Lerp(targetCF, 0.7)
-        
-        -- РЕАЛЬНАЯ СКОРОСТЬ
         localRoot.Velocity = config.CurrentVelocity
         
     else
-        -- ТОЧНАЯ ФИКСАЦИЯ НА НУЖНОЙ ПОЗИЦИИ
         if attachmentType == "front" then
             local exactPos = targetPos + (targetLook * settings.FrontDistance)
             if isAnimationLift then
@@ -1157,7 +1208,6 @@ local function syncMovement(localRoot, targetPos, targetLook, deltaTime, isAnima
     
     config.LastTargetPosition = targetPos
     
-    -- Обновление кулдауна телепортации
     if config.TeleportCooldown > 0 then
         config.TeleportCooldown = math.max(0, config.TeleportCooldown - deltaTime)
     end
@@ -1171,7 +1221,6 @@ local function handleGravity(localRoot, targetRoot)
         return
     end
     
-    -- ПРОВЕРКА ЗЕМЛИ ПОД НАМИ
     local rayOrigin = localRoot.Position + Vector3.new(0, 1, 0)
     local ray = Ray.new(rayOrigin, Vector3.new(0, -5, 0))
     local hit, hitPosition = workspace:FindPartOnRayWithIgnoreList(ray, {localRoot.Parent})
@@ -1179,7 +1228,6 @@ local function handleGravity(localRoot, targetRoot)
     if hit then
         local heightDiff = localRoot.Position.Y - hitPosition.Y
         
-        -- Более резкая коррекция высоты
         if heightDiff > 4 then
             local fallSpeed = math.min(120, (heightDiff - 3) * 30)
             localRoot.Velocity = Vector3.new(localRoot.Velocity.X, -fallSpeed, localRoot.Velocity.Z)
@@ -1190,65 +1238,83 @@ local function handleGravity(localRoot, targetRoot)
     end
 end
 
--- УЛУЧШЕННАЯ проверка цели
-local function checkAndSwitchTarget()
+-- ГЛАВНЫЙ ЦИКЛ - УЛУЧШЕННАЯ ВЕРСИЯ
+local function updateSyncMovement(deltaTime)
+    if not MainModule.Killaura.Enabled then return end
+    
+    local localPlayer = game:GetService("Players").LocalPlayer
+    if not localPlayer then return end
+    
+    local character = localPlayer.Character
+    if not character then return end
+    
+    local localRoot = character:FindFirstChild("HumanoidRootPart")
+    if not localRoot then return end
+    
     local config = MainModule.Killaura
     
-    if not config.Enabled or config.ShouldDisableForAnimation then 
-        config.LostTargetFrames = 0
-        return false 
-    end
+    -- ПРОВЕРКА ЦЕЛИ С УЛУЧШЕННОЙ ЛОГИКОЙ
+    local shouldKeepTarget = checkAndSwitchTarget()
     
-    local currentTarget = config.CurrentTarget
-    
-    if currentTarget then
-        local targetChar = currentTarget.Character
-        if not targetChar then 
-            config.LostTargetFrames = config.LostTargetFrames + 1
-            return config.LostTargetFrames < config.MaxLostFrames
-        end
+    if not shouldKeepTarget then
+        -- Пытаемся найти новую цель с увеличенным диапазоном
+        local closestPlayer = findClosestPlayer(true, config.TeleportSearchRange)
         
-        local humanoid = targetChar:FindFirstChildOfClass("Humanoid")
-        if not humanoid or humanoid.Health <= 0 then 
-            config.LostTargetFrames = config.LostTargetFrames + 1
-            return config.LostTargetFrames < config.MaxLostFrames
-        end
-        
-        local localPlayer = game:GetService("Players").LocalPlayer
-        if localPlayer and localPlayer.Character then
-            local localRoot = localPlayer.Character:FindFirstChild("HumanoidRootPart")
-            local targetRoot = targetChar:FindFirstChild("HumanoidRootPart")
+        if closestPlayer then
+            config.CurrentTarget = closestPlayer
+            config.IsAttached = true
+            config.LostTargetFrames = 0
+            config.TargetStabilityCounter = 0
+            
+            -- Быстрый телепорт к новой цели
+            local targetChar = closestPlayer.Character
+            local targetRoot = targetChar and targetChar:FindFirstChild("HumanoidRootPart")
             
             if localRoot and targetRoot then
-                local distance = (targetRoot.Position - localRoot.Position).Magnitude
-                if distance > 250 then 
-                    config.LostTargetFrames = config.LostTargetFrames + 1
-                    return config.LostTargetFrames < config.MaxLostFrames
-                end
+                local targetLook = targetRoot.CFrame.LookVector
+                local attachmentType, desiredDistance = getSmartPositioning(targetRoot)
                 
-                -- Цель валидна
-                config.LostTargetFrames = 0
-                config.TargetStabilityCounter = math.min(config.TargetStabilityCounter + 1, config.MaxStabilityCount)
-                config.LastTargetDistance = distance
+                local desiredOffset = (attachmentType == "front") and (targetLook * desiredDistance) or (-targetLook * desiredDistance)
+                local startPos = targetRoot.Position + desiredOffset
+                
+                localRoot.CFrame = CFrame.new(startPos, targetRoot.Position)
+                
+                config.LastPosition = startPos
+                config.OriginalGroundHeight = startPos.Y
+                config.CurrentVelocity = Vector3.new(0, 0, 0)
+                config.JumpStartAttachment = attachmentType
+                config.JumpStartDistance = desiredDistance
+                config.LastTargetUpdateTime = tick()
             end
+        else
+            config.TargetRetentionTime = math.max(0, config.TargetRetentionTime - 0.5)
+            
+            if config.TargetRetentionTime <= 0 then
+                task.delay(1.0, function()
+                    if config.Enabled and not config.CurrentTarget then
+                        MainModule.ToggleKillaura(false)
+                        MainModule.DisableFlight()
+                    end
+                end)
+            end
+            return
         end
-        
-        return true
     end
     
-    config.LostTargetFrames = config.LostTargetFrames + 1
-    return config.LostTargetFrames < config.MaxLostFrames
-end
-
--- ОСНОВНАЯ ФУНКЦИЯ - СИНХРОННАЯ ВЕРСИЯ
-local function syncMovementUpdate(targetRoot, targetHumanoid, localRoot, deltaTime)
-    local config = MainModule.Killaura
+    if not config.CurrentTarget or not config.IsAttached then return end
     
-    -- Проверяем отключение по анимации
-    if config.ShouldDisableForAnimation then
-        -- Останавливаем все движения
-        config.CurrentVelocity = Vector3.new(0, 0, 0)
-        localRoot.Velocity = config.CurrentVelocity
+    local isDisableAnimation = handleDisableAnimation(config.CurrentTarget)
+    
+    if isDisableAnimation then
+        return
+    end
+    
+    local targetChar = config.CurrentTarget.Character
+    local targetRoot = targetChar:FindFirstChild("HumanoidRootPart")
+    local targetHumanoid = targetChar:FindFirstChildOfClass("Humanoid")
+    
+    if not targetRoot or not targetHumanoid or targetHumanoid.Health <= 0 then
+        config.LostTargetFrames = config.MaxLostFrames
         return
     end
     
@@ -1262,7 +1328,6 @@ local function syncMovementUpdate(targetRoot, targetHumanoid, localRoot, deltaTi
     
     -- Синхронизация прыжка
     if isTargetJumping and not config.AnimationLiftActive then
-        -- Синхронизация высоты прыжка
         local targetHeight = targetRoot.Position.Y
         local myHeight = localRoot.Position.Y
         local heightDiff = targetHeight - myHeight
@@ -1293,111 +1358,13 @@ local function syncMovementUpdate(targetRoot, targetHumanoid, localRoot, deltaTi
     config.LastPosition = localRoot.Position
     config.TargetLastVelocity = targetVel
     config.LastDirectionCheckTime = tick()
-end
-
--- ГЛАВНЫЙ ЦИКЛ - СИНХРОННАЯ ВЕРСИЯ
-local function updateSyncMovement(deltaTime)
-    if not MainModule.Killaura.Enabled then return end
-    
-    local localPlayer = game:GetService("Players").LocalPlayer
-    if not localPlayer then return end
-    
-    local character = localPlayer.Character
-    if not character then return end
-    
-    local localRoot = character:FindFirstChild("HumanoidRootPart")
-    if not localRoot then return end
-    
-    local config = MainModule.Killaura
-    
-    -- ПРОВЕРКА ЦЕЛИ
-    local shouldKeepTarget = checkAndSwitchTarget()
-    
-    if not shouldKeepTarget then
-        -- Смена цели
-        config.CurrentTarget = nil
-        config.IsAttached = false
-        config.AnimationLiftActive = false
-        config.IsLifted = false
-        config.IsJumping = false
-        config.JumpSync = false
-        config.JumpStartPosition = nil
-        config.JumpStartAttachment = "behind"
-        config.JumpStartDistance = getGameSettings().BehindDistance
-        config.LostTargetFrames = 0
-        config.TargetStabilityCounter = 0
-        
-        local closestPlayer = findClosestPlayer(true)
-        if closestPlayer then
-            config.CurrentTarget = closestPlayer
-            config.IsAttached = true
-            
-            -- МГНОВЕННАЯ ТЕЛЕПОРТАЦИЯ К ЦЕЛИ
-            local targetChar = closestPlayer.Character
-            local targetRoot = targetChar and targetChar:FindFirstChild("HumanoidRootPart")
-            
-            if localRoot and targetRoot then
-                local targetLook = targetRoot.CFrame.LookVector
-                local targetVel = targetRoot.Velocity
-                local horizontalSpeed = Vector3.new(targetVel.X, 0, targetVel.Z).Magnitude
-                
-                -- Определяем начальную позицию
-                local attachmentType, desiredDistance = getSmartPositioning(targetRoot)
-                
-                local desiredOffset = (attachmentType == "front") and (targetLook * desiredDistance) or (-targetLook * desiredDistance)
-                local startPos = targetRoot.Position + desiredOffset
-                
-                -- МГНОВЕННАЯ ТЕЛЕПОРТАЦИЯ
-                localRoot.CFrame = CFrame.new(startPos, targetRoot.Position)
-                
-                config.LastPosition = startPos
-                config.OriginalGroundHeight = startPos.Y
-                config.CurrentVelocity = Vector3.new(0, 0, 0)
-                config.JumpStartAttachment = attachmentType
-                config.JumpStartDistance = desiredDistance
-            end
-        else
-            task.delay(0.1, function()
-                if config.Enabled and not config.CurrentTarget then
-                    MainModule.ToggleKillaura(false)
-                    MainModule.DisableFlight()
-                end
-            end)
-            return
-        end
-    end
-    
-    if not config.CurrentTarget or not config.IsAttached then return end
-    
-    -- НОВАЯ: Проверяем анимацию отключения у текущей цели
-    local isDisableAnimation = handleDisableAnimation(config.CurrentTarget)
-    
-    -- Если обнаружена анимация отключения, пропускаем обработку
-    if isDisableAnimation then
-        return
-    end
-    
-    -- Получение данных цели
-    local targetChar = config.CurrentTarget.Character
-    local targetRoot = targetChar:FindFirstChild("HumanoidRootPart")
-    local targetHumanoid = targetChar:FindFirstChildOfClass("Humanoid")
-    
-    if not targetRoot or not targetHumanoid or targetHumanoid.Health <= 0 then
-        config.LostTargetFrames = config.MaxLostFrames
-        return
-    end
-    
-    -- ВЫПОЛНЯЕМ СИНХРОННУЮ СИНХРОНИЗАЦИЮ
-    syncMovementUpdate(targetRoot, targetHumanoid, localRoot, deltaTime)
+    config.LastTargetUpdateTime = tick()
 end
 
 function MainModule.ToggleKillaura(enabled)
     local config = MainModule.Killaura
     
     if config.Enabled == enabled then return end
-    
-    -- УБРАЛИ ПРОВЕРКУ ИГРЫ ПРИ ВКЛЮЧЕНИИ
-    -- Теперь можно включать в любой игре
     
     -- Автоматическое управление флаем
     if enabled then
@@ -1407,7 +1374,7 @@ function MainModule.ToggleKillaura(enabled)
     end
     
     if enabled then
-        if not findClosestPlayer(true) then 
+        if not findClosestPlayer(true, config.TeleportSearchRange) then 
             MainModule.DisableFlight()
             MainModule.ShowNotification("Killaura", "No target found", 3)
             return 
@@ -1453,12 +1420,15 @@ function MainModule.ToggleKillaura(enabled)
         config.ShouldDisableForAnimation = false
         config.IsDisabledByAnimation = false
         config.WasEnabledBeforeAnimation = false
+        config.TargetRetentionTime = 0
+        config.IsTeleportingToTarget = false
+        config.LastTargetUpdateTime = 0
         
         return
     end
     
     -- Включение с поиском цели
-    local closestPlayer = findClosestPlayer(true)
+    local closestPlayer = findClosestPlayer(true, config.TeleportSearchRange)
     if closestPlayer then
         config.CurrentTarget = closestPlayer
         config.IsAttached = true
@@ -1478,6 +1448,8 @@ function MainModule.ToggleKillaura(enabled)
         config.ShouldDisableForAnimation = false
         config.IsDisabledByAnimation = false
         config.WasEnabledBeforeAnimation = false
+        config.TargetRetentionTime = config.MaxRetentionTime / 2
+        config.IsTeleportingToTarget = false
         
         -- НАЧАЛЬНАЯ ТЕЛЕПОРТАЦИЯ
         local localPlayer = game:GetService("Players").LocalPlayer
@@ -1489,13 +1461,11 @@ function MainModule.ToggleKillaura(enabled)
             if localRoot and targetRoot then
                 local targetLook = targetRoot.CFrame.LookVector
                 
-                -- Определяем начальную позицию
                 local attachmentType, desiredDistance = getSmartPositioning(targetRoot)
                 
                 local desiredOffset = (attachmentType == "front") and (targetLook * desiredDistance) or (-targetLook * desiredDistance)
                 local startPos = targetRoot.Position + desiredOffset
                 
-                -- МГНОВЕННАЯ ТЕЛЕПОРТАЦИЯ
                 localRoot.CFrame = CFrame.new(startPos, targetRoot.Position)
                 
                 config.LastPosition = startPos
@@ -1503,6 +1473,7 @@ function MainModule.ToggleKillaura(enabled)
                 config.CurrentVelocity = Vector3.new(0, 0, 0)
                 config.JumpStartAttachment = attachmentType
                 config.JumpStartDistance = desiredDistance
+                config.LastTargetUpdateTime = tick()
             end
         end
     else
@@ -1548,11 +1519,15 @@ function MainModule.ToggleKillaura(enabled)
             config.ShouldDisableForAnimation = false
             config.IsDisabledByAnimation = false
             config.WasEnabledBeforeAnimation = false
+            config.TargetRetentionTime = 0
+            config.IsTeleportingToTarget = false
+            config.LastTargetUpdateTime = 0
             
-            local closestPlayer = findClosestPlayer(true)
+            local closestPlayer = findClosestPlayer(true, config.TeleportSearchRange)
             if closestPlayer then
                 config.CurrentTarget = closestPlayer
                 config.IsAttached = true
+                config.TargetRetentionTime = config.MaxRetentionTime / 2
             else
                 MainModule.ToggleKillaura(false)
                 MainModule.DisableFlight()
@@ -1563,7 +1538,7 @@ function MainModule.ToggleKillaura(enabled)
     
     local removeConn = players.PlayerRemoving:Connect(function(player)
         if config.Enabled and config.CurrentTarget == player then
-            config.LostTargetFrames = config.MaxLostFrames
+            config.LostTargetFrames = config.MaxLostFrames * 2
         end
     end)
     table.insert(config.Connections, removeConn)
