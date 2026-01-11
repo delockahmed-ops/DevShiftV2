@@ -4234,37 +4234,30 @@ MainModule.AutoDodge = {
     },
     Connections = {},
     LastDodgeTime = 0,
-    DodgeCooldown = 0.5,
-    Range = 5,
-    RangeSquared = 5 * 5,
+    DodgeCooldown = 0.9,
+    Range = 5, -- Вернул на 5
+    RangeSquared = 5 * 5, -- Вернул на 5
     AnimationIdsSet = {},
     
-    -- УПРОЩЕННАЯ СИСТЕМА ОТСЛЕЖИВАНИЯ
-    ActiveAnimations = {}, -- playerName -> {animationId = true} - активные анимации
-    LastAnimationStartTime = {}, -- playerName -> lastAnimationStartTime
+    ActiveAnimations = {},
+    LastAnimationStartTime = {},
     
-    -- Система перехвата
     CapturedCall = nil,
     LastCapturedCallTime = 0,
     OriginalFireServer = nil,
     Remote = nil,
     
-    -- Для максимальной скорости
     HeartbeatConnection = nil
 }
 
--- Заполняем сет анимаций
 for _, id in ipairs(MainModule.AutoDodge.AnimationIds) do
     MainModule.AutoDodge.AnimationIdsSet[id] = true
 end
-
--- ============ СИСТЕМА ПЕРЕХВАТА ВЫЗОВОВ ============
 
 local function setupRemoteHook()
     local remote = nil
     local rs = game:GetService("ReplicatedStorage")
     
-    -- Быстрый поиск
     local function quickFindRemote()
         if rs:FindFirstChild("Remotes") then
             local remotesFolder = rs.Remotes
@@ -4328,8 +4321,6 @@ local function setupRemoteHook()
     return true
 end
 
--- ============ МГНОВЕННЫЙ ДОДЖ ============
-
 local function executeDodge()
     if not MainModule.AutoDodge.Enabled then 
         return false 
@@ -4389,8 +4380,6 @@ local function executeDodge()
     return true
 end
 
--- ============ БЫСТРАЯ ПРОВЕРКА ВЗГЛЯДА ============
-
 local function isLookingAtPlayer(targetPlayer, localPlayer)
     if not targetPlayer or not targetPlayer.Character then return false end
     if not localPlayer or not localPlayer.Character then return false end
@@ -4403,10 +4392,18 @@ local function isLookingAtPlayer(targetPlayer, localPlayer)
     local directionToLocal = (localRoot.Position - targetHead.Position).Unit
     local lookVector = targetHead.CFrame.LookVector
     
-    return directionToLocal:Dot(lookVector) > -0.7
+    -- Dot product показывает насколько он смотрит в нашем направлении
+    -- Значение от -1 до 1:
+    --   1 = смотрит прямо на нас (спереди)
+    --   0 = смотрит вбок
+    --  -1 = смотрит прямо от нас (сзади)
+    local dotProduct = directionToLocal:Dot(lookVector)
+    
+    -- Доджим если игрок смотрит В НАШЕМ НАПРАВЛЕНИИ (с любой стороны)
+    -- Более мягкое условие для всех сторон
+    -- 0.3 значит: если он смотрит хоть немного в нашу сторону
+    return math.abs(dotProduct) >= 0.3  -- Сделал более мягкое условие
 end
-
--- ============ МГНОВЕННАЯ ОБРАБОТКА ЧЕРЕЗ HEARTBEAT ============
 
 local function setupHeartbeatProcessing()
     local RunService = game:GetService("RunService")
@@ -4420,7 +4417,6 @@ local function setupHeartbeatProcessing()
         local autoDodge = MainModule.AutoDodge
         local currentTime = tick()
         
-        -- Проверяем кулдаун доджа
         if currentTime - autoDodge.LastDodgeTime < autoDodge.DodgeCooldown then
             return
         end
@@ -4428,7 +4424,6 @@ local function setupHeartbeatProcessing()
         local localRoot = LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
         if not localRoot then return end
         
-        -- Проверяем всех игроков
         for _, player in pairs(Players:GetPlayers()) do
             if player == LocalPlayer then continue end
             if not player.Character then continue end
@@ -4437,57 +4432,49 @@ local function setupHeartbeatProcessing()
             local targetRoot = character:FindFirstChild("HumanoidRootPart")
             if not targetRoot then continue end
             
-            -- Быстрая проверка дистанции
             local distanceSquared = (targetRoot.Position - localRoot.Position).Magnitude
             if distanceSquared > autoDodge.RangeSquared then
-                -- Если вне дистанции, очищаем анимации игрока
                 autoDodge.ActiveAnimations[player.Name] = nil
                 continue
             end
             
-            -- Проверка взгляда
+            -- ТЕПЕРЬ: Проверяем, смотрит ли игрок ПРЯМО или ПОЧТИ ПРЯМО на нас
+            -- Если смотрит прямо/почти прямо (isLookingAtPlayer возвращает true) - ДОДЖИМ
+            -- Если смотрит криво/в сторону (isLookingAtPlayer возвращает false) - НЕ доджим
             if not isLookingAtPlayer(player, LocalPlayer) then
+                -- Игрок смотрит криво/в сторону - НЕ доджим
                 continue
             end
             
+            -- Игрок смотрит прямо или почти прямо - проверяем анимацию
             local humanoid = character:FindFirstChild("Humanoid")
             if not humanoid then continue end
             
-            -- Проверяем ВСЕ активные треки
             local playingTracks = humanoid:GetPlayingAnimationTracks()
             
             for _, track in pairs(playingTracks) do
                 if track and track.Animation and track.IsPlaying then
                     local animId = track.Animation.AnimationId
                     
-                    -- Проверяем, является ли эта анимация атакой
                     if autoDodge.AnimationIdsSet[animId] then
                         
-                        -- Инициализируем таблицу для игрока если нужно
                         if not autoDodge.ActiveAnimations[player.Name] then
                             autoDodge.ActiveAnimations[player.Name] = {}
                         end
                         
-                        -- Ключ для отслеживания: animationId + timestamp трека
                         local animationKey = animId
                         
-                        -- Если эта анимация ЕЩЁ НЕ ОБРАБОТАНА для этого игрока
                         if not autoDodge.ActiveAnimations[player.Name][animationKey] then
-                            -- ОТМЕЧАЕМ АНИМАЦИЮ КАК ОБРАБОТАННУЮ
                             autoDodge.ActiveAnimations[player.Name][animationKey] = true
                             
-                            -- МГНОВЕННЫЙ ДОДЖ
                             if executeDodge() then
-                                -- Отслеживаем окончание трека чтобы очистить запись
                                 if track.Stopped then
                                     track.Stopped:Once(function()
-                                        -- При окончании трека удаляем анимацию из активных
                                         if autoDodge.ActiveAnimations[player.Name] then
                                             autoDodge.ActiveAnimations[player.Name][animationKey] = nil
                                         end
                                     end)
                                 else
-                                    -- Если нет события Stopped, очищаем через 2 секунды
                                     task.delay(2, function()
                                         if autoDodge.ActiveAnimations[player.Name] then
                                             autoDodge.ActiveAnimations[player.Name][animationKey] = nil
@@ -4495,9 +4482,8 @@ local function setupHeartbeatProcessing()
                                     end)
                                 end
                                 
-                                return -- Останавливаем после успешного доджа
+                                return
                             else
-                                -- Если додж не удался, очищаем сразу
                                 autoDodge.ActiveAnimations[player.Name][animationKey] = nil
                             end
                         end
@@ -4507,12 +4493,9 @@ local function setupHeartbeatProcessing()
         end
     end
     
-    -- Используем RenderStepped для максимальной скорости
     MainModule.AutoDodge.HeartbeatConnection = RunService.Heartbeat:Connect(instantHeartbeatCheck)
     table.insert(MainModule.AutoDodge.Connections, MainModule.AutoDodge.HeartbeatConnection)
 end
-
--- ============ НАСТРОЙКА ОТСЛЕЖИВАНИЯ ИГРОКОВ ДЛЯ ОЧИСТКИ ============
 
 local function setupPlayerCleanupTracking()
     local Players = game:GetService("Players")
@@ -4521,7 +4504,6 @@ local function setupPlayerCleanupTracking()
     for _, player in pairs(Players:GetPlayers()) do
         if player == LocalPlayer then continue end
         
-        -- Очистка при смерти
         local function setupCharacter(character)
             local humanoid = character:FindFirstChild("Humanoid")
             if humanoid then
@@ -4543,7 +4525,6 @@ local function setupPlayerCleanupTracking()
         table.insert(MainModule.AutoDodge.Connections, charConn)
     end
     
-    -- Отслеживание новых игроков
     local playerAddedConn = Players.PlayerAdded:Connect(function(player)
         if player == LocalPlayer then return end
         
@@ -4564,10 +4545,7 @@ local function setupPlayerCleanupTracking()
     table.insert(MainModule.AutoDodge.Connections, playerAddedConn)
 end
 
--- ============ УПРАВЛЕНИЕ СИСТЕМОЙ ============
-
 function MainModule.ToggleAutoDodge(enabled)
-    -- Очистка всех соединений
     if MainModule.AutoDodge.Connections then
         for _, conn in pairs(MainModule.AutoDodge.Connections) do
             if conn then
@@ -4576,7 +4554,6 @@ function MainModule.ToggleAutoDodge(enabled)
         end
     end
     
-    -- Сброс всех данных
     MainModule.AutoDodge.Enabled = false
     MainModule.AutoDodge.Connections = {}
     MainModule.AutoDodge.ActiveAnimations = {}
@@ -4587,15 +4564,12 @@ function MainModule.ToggleAutoDodge(enabled)
     if enabled then
         MainModule.AutoDodge.Enabled = true
         
-        -- Инициализация перехвата
         if not MainModule.AutoDodge.Remote then
             setupRemoteHook()
         end
         
-        -- Настройка очистки данных игроков
         setupPlayerCleanupTracking()
         
-        -- Запуск мгновенной обработки через Heartbeat
         setupHeartbeatProcessing()
         
         MainModule.ShowNotification("Auto Dodge", "Auto Dodge Enabled", 3)
@@ -4604,8 +4578,6 @@ function MainModule.ToggleAutoDodge(enabled)
     end
 end
 
--- ============ ОБРАБОТКА ВЫХОДА ИГРОКА ============
-
 local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
 
@@ -4613,13 +4585,10 @@ Players.PlayerRemoving:Connect(function(player)
     if player == LocalPlayer then
         MainModule.ToggleAutoDodge(false)
     else
-        -- Очистка данных об игроке
         MainModule.AutoDodge.ActiveAnimations[player.Name] = nil
         MainModule.AutoDodge.LastAnimationStartTime[player.Name] = nil
     end
 end)
-
--- ============ ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ============
 
 function MainModule.ShowCapturedCall()
     return MainModule.AutoDodge.CapturedCall
@@ -4633,11 +4602,8 @@ function MainModule.ForceDodge()
     return executeDodge()
 end
 
--- ============ ИНИЦИАЛИЗАЦИЯ ============
-
 task.wait(0.4)
 
--- Автоматическая инициализация
 local hookSuccess = setupRemoteHook()
 
 task.spawn(function()
