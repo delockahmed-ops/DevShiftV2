@@ -467,6 +467,7 @@ MainModule.Killaura = {
     WasDisabledByAnimation = false,
     AnimationEndTime = 0,
     ReenableDelay = 1, -- Задержка 1 секунда
+    ReenableConnection = nil, -- Соединение для проверки перезапуска
     
     -- УЛЬТРА-БЫСТРЫЕ ПАРАМЕТРЫ
     BehindDistance = 2,
@@ -529,8 +530,88 @@ for _, animId in pairs(MainModule.Killaura.TeleportAnimations) do
     MainModule.Killaura.TargetAnimationsSet[animId] = true
 end
 
--- ПРОВЕРКА АНИМАЦИИ ОТКЛЮЧЕНИЯ С ЛОГИКОЙ АВТОМАТИЧЕСКОГО ВКЛЮЧЕНИЯ
+-- Функция для проверки и автоматического включения киллауры
+local function CheckAndReenableKillaura()
+    local config = MainModule.Killaura
+    
+    -- Если киллаура не была отключена анимацией, ничего не делаем
+    if not config.WasDisabledByAnimation then
+        return
+    end
+    
+    -- Проверяем, закончилась ли анимация
+    local localPlayer = Players.LocalPlayer
+    if not localPlayer then return end
+    
+    local character = localPlayer.Character
+    if not character then return end
+    
+    local humanoid = character:FindFirstChildOfClass("Humanoid")
+    if not humanoid then return end
+    
+    local tracks = humanoid:GetPlayingAnimationTracks()
+    local hasCancelAnim = false
+    
+    if tracks then
+        for _, track in pairs(tracks) do
+            if track and track.Animation then
+                local animId = tostring(track.Animation.AnimationId)
+                local cleanId = animId:match("%d+")
+                
+                if cleanId and cleanId == config.CancelAnimation then
+                    hasCancelAnim = true
+                    break
+                end
+            end
+        end
+    end
+    
+    -- Если анимация все еще играет, ждем
+    if hasCancelAnim then
+        config.AnimationEndTime = 0
+        return
+    end
+    
+    -- Если анимация закончилась, запоминаем время окончания
+    if config.AnimationEndTime == 0 then
+        config.AnimationEndTime = tick()
+        MainModule.ShowNotification("Killaura", "Animation ended, waiting 1 sec", 2)
+        return
+    end
+    
+    -- Проверяем, прошла ли 1 секунда
+    if tick() - config.AnimationEndTime >= config.ReenableDelay then
+        -- Отключаем соединение для проверки
+        if config.ReenableConnection then
+            config.ReenableConnection:Disconnect()
+            config.ReenableConnection = nil
+        end
+        
+        -- Сбрасываем флаги
+        config.WasDisabledByAnimation = false
+        config.CancelAnimationActive = false
+        config.AnimationEndTime = 0
+        
+        -- Проверяем наличие целей
+        local closestPlayer = findClosestPlayer()
+        if closestPlayer then
+            MainModule.ShowNotification("Killaura", "Re-enabling after animation", 2)
+            MainModule.ToggleKillaura(true)
+        else
+            MainModule.ShowNotification("Killaura", "No target found for re-enable", 2)
+        end
+    end
+end
+
+-- ПРОВЕРКА АНИМАЦИИ ОТКЛЮЧЕНИЯ
 local function CheckCancelAnimation()
+    local config = MainModule.Killaura
+    
+    -- Если киллаура не включена или уже отключена анимацией, пропускаем
+    if not config.Enabled or config.WasDisabledByAnimation then
+        return false
+    end
+    
     local localPlayer = Players.LocalPlayer
     if not localPlayer then return false end
     
@@ -541,56 +622,39 @@ local function CheckCancelAnimation()
     if not humanoid then return false end
     
     local tracks = humanoid:GetPlayingAnimationTracks()
-    if not tracks then return false end
-    
     local foundCancelAnim = false
     
-    for _, track in pairs(tracks) do
-        if track and track.Animation then
-            local animId = tostring(track.Animation.AnimationId)
-            local cleanId = animId:match("%d+")
-            
-            if cleanId and cleanId == MainModule.Killaura.CancelAnimation then
-                foundCancelAnim = true
-                break
+    if tracks then
+        for _, track in pairs(tracks) do
+            if track and track.Animation then
+                local animId = tostring(track.Animation.AnimationId)
+                local cleanId = animId:match("%d+")
+                
+                if cleanId and cleanId == config.CancelAnimation then
+                    foundCancelAnim = true
+                    break
+                end
             end
         end
     end
     
-    local config = MainModule.Killaura
-    
-    -- Если киллаура включена и нашли анимацию отключения
-    if config.Enabled and foundCancelAnim and not config.CancelAnimationActive then
+    -- Если нашли анимацию отключения и киллаура включена
+    if foundCancelAnim and config.Enabled and not config.CancelAnimationActive then
         config.CancelAnimationActive = true
         config.WasDisabledByAnimation = true
         config.AnimationEndTime = 0
+        
         MainModule.ToggleKillaura(false)
         MainModule.ShowNotification("Killaura", "Disabled by animation", 2)
-        return true
-    end
-    
-    -- Если анимация закончилась и мы ждем включения
-    if not foundCancelAnim and config.WasDisabledByAnimation then
-        if config.AnimationEndTime == 0 then
-            -- Запоминаем время окончания анимации
-            config.AnimationEndTime = tick()
-        elseif tick() - config.AnimationEndTime >= config.ReenableDelay then
-            -- Прошла 1 секунда - включаем киллауру
-            config.WasDisabledByAnimation = false
-            config.CancelAnimationActive = false
-            config.AnimationEndTime = 0
-            
-            -- Включаем киллауру если есть цели
-            local closestPlayer = findClosestPlayer()
-            if closestPlayer then
-                MainModule.ToggleKillaura(true)
-                MainModule.ShowNotification("Killaura", "Re-enabled after animation", 2)
-            else
-                MainModule.ShowNotification("Killaura", "No target found for re-enable", 2)
-            end
+        
+        -- Запускаем проверку для автоматического включения
+        if not config.ReenableConnection then
+            config.ReenableConnection = game:GetService("RunService").Heartbeat:Connect(function()
+                CheckAndReenableKillaura()
+            end)
         end
-    elseif not foundCancelAnim then
-        config.CancelAnimationActive = false
+        
+        return true
     end
     
     return foundCancelAnim
@@ -1235,6 +1299,20 @@ function MainModule.ToggleKillaura(enabled)
     if config.Enabled == enabled then return end
     
     if enabled then
+        -- Если пытаемся включить киллауру, которая была отключена анимацией
+        if config.WasDisabledByAnimation then
+            -- Сбрасываем все флаги анимации
+            config.WasDisabledByAnimation = false
+            config.CancelAnimationActive = false
+            config.AnimationEndTime = 0
+            
+            -- Отключаем соединение для проверки перезапуска
+            if config.ReenableConnection then
+                config.ReenableConnection:Disconnect()
+                config.ReenableConnection = nil
+            end
+        end
+        
         -- Проверяем, есть ли цели
         local closestPlayer = findClosestPlayer()
         if not closestPlayer then 
@@ -1242,26 +1320,42 @@ function MainModule.ToggleKillaura(enabled)
             return 
         end
         
-        -- Сбрасываем флаги автоматического включения
-        config.WasDisabledByAnimation = false
-        config.CancelAnimationActive = false
-        config.AnimationEndTime = 0
-        
         -- Включаем полет перед включением киллауры
         MainModule.EnableFlight()
     end
     
     config.Enabled = enabled
     
-    -- Быстрая очистка
+    -- Быстрая очистка соединений (кроме ReenableConnection)
     for _, conn in pairs(config.Connections) do
         if conn then conn:Disconnect() end
     end
     config.Connections = {}
     
     if not enabled then
-        -- Если отключение не вызвано анимацией, сбрасываем все флаги
-        if not config.WasDisabledByAnimation then
+        -- Если отключение вызвано анимацией, сохраняем состояние для перезапуска
+        if config.WasDisabledByAnimation then
+            -- Сохраняем текущую цель
+            local currentTarget = config.CurrentTarget
+            config.CurrentTarget = nil
+            config.IsAttached = false
+            config.IsLifted = false
+            config.IsJumping = false
+            config.AnimationLiftActive = false
+            config.LastAnimationState = false
+            config.JumpSync = false
+            config.JumpStartPosition = nil
+            config.CurrentVelocity = Vector3.new(0, 0, 0)
+            config.JumpStartAttachment = "behind"
+            config.JumpStartDistance = config.BehindDistance
+            config.CancelAnimationActive = true
+            
+            -- Если была цель, сохраняем ее
+            if currentTarget then
+                config.CurrentTarget = currentTarget
+            end
+        else
+            -- Обычное отключение - сбрасываем все
             config.CurrentTarget = nil
             config.IsAttached = false
             config.IsLifted = false
@@ -1274,6 +1368,14 @@ function MainModule.ToggleKillaura(enabled)
             config.JumpStartAttachment = "behind"
             config.JumpStartDistance = config.BehindDistance
             config.CancelAnimationActive = false
+            config.WasDisabledByAnimation = false
+            config.AnimationEndTime = 0
+            
+            -- Отключаем соединение для проверки перезапуска
+            if config.ReenableConnection then
+                config.ReenableConnection:Disconnect()
+                config.ReenableConnection = nil
+            end
         end
         
         -- Выключаем полет при отключении киллауры
