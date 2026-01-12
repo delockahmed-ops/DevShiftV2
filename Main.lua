@@ -4380,13 +4380,15 @@ MainModule.AutoDodge = {
         "rbxassetid://135690448001690", 
         "rbxassetid://103355259844069",
         "rbxassetid://125906547773381",
-        "rbxassetid://121147456137931"
+        "rbxassetid://121147456137931",
+        "rbxassetid://96924216250322",
+        "rbxassetid://116839849594540"
     },
     Connections = {},
     LastDodgeTime = 0,
-    DodgeCooldown = 0.9,
-    Range = 5, -- Вернул на 5
-    RangeSquared = 5 * 5, -- Вернул на 5
+    DodgeCooldown = 0.5,
+    Range = 4.6, -- Вернул на 5
+    RangeSquared = 4.6 * 4.6, -- Вернул на 5
     AnimationIdsSet = {},
     
     ActiveAnimations = {},
