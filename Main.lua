@@ -4387,8 +4387,8 @@ MainModule.AutoDodge = {
     Connections = {},
     LastDodgeTime = 0,
     DodgeCooldown = 0.5,
-    Range = 4.6, -- Вернул на 5
-    RangeSquared = 4.6 * 4.6, -- Вернул на 5
+    Range = 4.5, -- Вернул на 5
+    RangeSquared = 4.5 * 4.5, -- Вернул на 5
     AnimationIdsSet = {},
     
     ActiveAnimations = {},
