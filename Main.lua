@@ -3457,8 +3457,26 @@ function MainModule.EnableGlassManufacturerVision()
 end
 
 function MainModule.EnableFreeVIP()
-    LocalPlayer:SetAttribute("__OwnsVIPGamepass", true)
-    LocalPlayer:SetAttribute("VIPChatTag", true)
+    local LocalPlayer = game.Players.LocalPlayer
+    
+    local function setAttributeSafe(instance, name, value)
+        instance:SetAttribute(name, value)
+    end
+    
+    -- Устанавливаем основные VIP атрибуты
+    setAttributeSafe(LocalPlayer, "__OwnsVIPGamepass", true)
+    setAttributeSafe(LocalPlayer, "VIPChatTag", true)
+    setAttributeSafe(LocalPlayer, "VIPJoinAlert", true)
+    setAttributeSafe(LocalPlayer, "VIPHideWins", false)
+    
+    -- Устанавливаем данные настроек VIP
+    local vipSettingData = '{"Hide Wins":false,"Custom Clothing Colorpicker":"None","Custom Clothing Color":true}'
+    setAttributeSafe(LocalPlayer, "_VIPSettingData", vipSettingData)
+    
+    -- Устанавливаем цвет для VIP
+    setAttributeSafe(LocalPlayer, "ChloatingColor", Color3.fromRGB(255, 255, 255))
+    
+    -- Показываем уведомление
     MainModule.ShowNotification("GamePass", "Free VIP: Successfully granted", 3)
 end
 
