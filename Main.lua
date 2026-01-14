@@ -3457,7 +3457,7 @@ function MainModule.EnableGlassManufacturerVision()
 end
 
 function MainModule.EnableFreeVIP()
-    local LocalPlayer = game.Players.LocalPlayer
+    local LocalPlayer = game:GetService("Players").LocalPlayer
     
     local function setAttributeSafe(instance, name, value)
         instance:SetAttribute(name, value)
