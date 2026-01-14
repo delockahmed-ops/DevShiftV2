@@ -4387,8 +4387,8 @@ MainModule.AutoDodge = {
     Connections = {},
     LastDodgeTime = 0,
     DodgeCooldown = 0.5,
-    Range = 4.5, -- Вернул на 5
-    RangeSquared = 4.5 * 4.5, -- Вернул на 5
+    Range = 4.7, -- Вернул на 5
+    RangeSquared = 4.7 * 4.7, -- Вернул на 5
     AnimationIdsSet = {},
     
     ActiveAnimations = {},
@@ -4584,7 +4584,10 @@ local function setupHeartbeatProcessing()
             local targetRoot = character:FindFirstChild("HumanoidRootPart")
             if not targetRoot then continue end
             
-            local distanceSquared = (targetRoot.Position - localRoot.Position).Magnitude
+            -- ИСПРАВЛЕНИЕ: Правильное вычисление квадрата расстояния
+            local vector = targetRoot.Position - localRoot.Position
+            local distanceSquared = vector.X * vector.X + vector.Y * vector.Y + vector.Z * vector.Z
+            
             if distanceSquared > autoDodge.RangeSquared then
                 autoDodge.ActiveAnimations[player.Name] = nil
                 continue
