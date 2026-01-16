@@ -6111,6 +6111,7 @@ MainModule.VoidKillFeature = {
     PlatformYOffset = -4,
     PlatformSize = Vector3.new(10, 1, 10),
     ReturnDelay = 1,
+    MaxRadius = 70, -- Максимальный радиус от персонажа
     SavedCFrame = nil,
     ActiveAnimation = false,
     AnimationStartTime = 0,
@@ -6170,6 +6171,30 @@ function MainModule.ToggleVoidKill(enabled)
         return
     end
     
+    local function calculatePlatformPosition(characterPosition)
+        -- Вычисляем направление от персонажа к ZonePosition
+        local direction = (MainModule.VoidKillFeature.ZonePosition - characterPosition)
+        direction = Vector3.new(direction.X, 0, direction.Z) -- Игнорируем Y для 2D расстояния
+        
+        local distance = direction.Magnitude
+        
+        if distance <= MainModule.VoidKillFeature.MaxRadius then
+            -- Если расстояние меньше или равно 70, используем ZonePosition
+            return MainModule.VoidKillFeature.ZonePosition + Vector3.new(0, MainModule.VoidKillFeature.PlatformYOffset, 0)
+        else
+            -- Если расстояние больше 70, вычисляем точку на границе радиуса 70
+            local normalizedDirection = direction.Unit
+            local platformX = characterPosition.X + normalizedDirection.X * MainModule.VoidKillFeature.MaxRadius
+            local platformZ = characterPosition.Z + normalizedDirection.Z * MainModule.VoidKillFeature.MaxRadius
+            
+            return Vector3.new(
+                platformX,
+                MainModule.VoidKillFeature.ZonePosition.Y + MainModule.VoidKillFeature.PlatformYOffset,
+                platformZ
+            )
+        end
+    end
+    
     local function checkAnimations()
         if not MainModule.VoidKillFeature.Enabled then return end
         
@@ -6194,8 +6219,9 @@ function MainModule.ToggleVoidKill(enabled)
                             
                             MainModule.VoidKillFeature.SavedCFrame = character:GetPrimaryPartCFrame()
                             
-                            local platformPosition = MainModule.VoidKillFeature.ZonePosition + 
-                                                    Vector3.new(0, MainModule.VoidKillFeature.PlatformYOffset, 0)
+                            -- Вычисляем позицию платформы на основе позиции персонажа
+                            local characterPosition = character:GetPrimaryPartCFrame().Position
+                            local platformPosition = calculatePlatformPosition(characterPosition)
                             
                             MainModule.VoidKillFeature.AntiFallPlatform = Instance.new("Part")
                             MainModule.VoidKillFeature.AntiFallPlatform.Name = "VoidKillAntiFall"
@@ -6209,7 +6235,14 @@ function MainModule.ToggleVoidKill(enabled)
                             MainModule.VoidKillFeature.AntiFallPlatform.Position = platformPosition
                             MainModule.VoidKillFeature.AntiFallPlatform.Parent = workspace
                             
-                            character:SetPrimaryPartCFrame(CFrame.new(MainModule.VoidKillFeature.ZonePosition))
+                            -- Телепортируем персонажа к платформе, но с сохранением высоты ZonePosition
+                            character:SetPrimaryPartCFrame(
+                                CFrame.new(
+                                    platformPosition.X,
+                                    MainModule.VoidKillFeature.ZonePosition.Y,
+                                    platformPosition.Z
+                                )
+                            )
                             
                             local stoppedConn = track.Stopped:Connect(function()
                                 task.wait(MainModule.VoidKillFeature.ReturnDelay)
@@ -6256,8 +6289,9 @@ function MainModule.ToggleVoidKill(enabled)
                         
                         MainModule.VoidKillFeature.SavedCFrame = char:GetPrimaryPartCFrame()
                         
-                        local platformPosition = MainModule.VoidKillFeature.ZonePosition + 
-                                                Vector3.new(0, MainModule.VoidKillFeature.PlatformYOffset, 0)
+                        -- Вычисляем позицию платформы на основе позиции персонажа
+                        local characterPosition = char:GetPrimaryPartCFrame().Position
+                        local platformPosition = calculatePlatformPosition(characterPosition)
                         
                         MainModule.VoidKillFeature.AntiFallPlatform = Instance.new("Part")
                         MainModule.VoidKillFeature.AntiFallPlatform.Name = "VoidKillAntiFall"
@@ -6271,7 +6305,14 @@ function MainModule.ToggleVoidKill(enabled)
                         MainModule.VoidKillFeature.AntiFallPlatform.Position = platformPosition
                         MainModule.VoidKillFeature.AntiFallPlatform.Parent = workspace
                         
-                        char:SetPrimaryPartCFrame(CFrame.new(MainModule.VoidKillFeature.ZonePosition))
+                        -- Телепортируем персонажа к платформе, но с сохранением высоты ZonePosition
+                        char:SetPrimaryPartCFrame(
+                            CFrame.new(
+                                platformPosition.X,
+                                MainModule.VoidKillFeature.ZonePosition.Y,
+                                platformPosition.Z
+                            )
+                        )
                         
                         local stoppedConn = track.Stopped:Connect(function()
                             task.wait(MainModule.VoidKillFeature.ReturnDelay)
