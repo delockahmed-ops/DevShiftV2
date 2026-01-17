@@ -4398,15 +4398,13 @@ MainModule.AutoDodge = {
         "rbxassetid://135690448001690", 
         "rbxassetid://103355259844069",
         "rbxassetid://125906547773381",
-        "rbxassetid://121147456137931",
-        "rbxassetid://96924216250322",
-        "rbxassetid://116839849594540"
+        "rbxassetid://121147456137931"
     },
     Connections = {},
     LastDodgeTime = 0,
-    DodgeCooldown = 0.5,
-    Range = 4.7, -- Вернул на 5
-    RangeSquared = 4.7 * 4.7, -- Вернул на 5
+    DodgeCooldown = 0.9,
+    Range = 4.8, -- Изменено с 5 на 4.8
+    RangeSquared = 4.8 * 4.8, -- Обновлено для 4.8
     AnimationIdsSet = {},
     
     ActiveAnimations = {},
@@ -4550,6 +4548,7 @@ local function executeDodge()
     return true
 end
 
+-- Улучшенная функция проверки направления взгляда
 local function isLookingAtPlayer(targetPlayer, localPlayer)
     if not targetPlayer or not targetPlayer.Character then return false end
     if not localPlayer or not localPlayer.Character then return false end
@@ -4559,20 +4558,20 @@ local function isLookingAtPlayer(targetPlayer, localPlayer)
     
     if not (targetHead and localRoot) then return false end
     
+    -- Вектор от цели к локальному игроку
     local directionToLocal = (localRoot.Position - targetHead.Position).Unit
+    -- Вектор взгляда цели
     local lookVector = targetHead.CFrame.LookVector
     
-    -- Dot product показывает насколько он смотрит в нашем направлении
-    -- Значение от -1 до 1:
-    --   1 = смотрит прямо на нас (спереди)
-    --   0 = смотрит вбок
-    --  -1 = смотрит прямо от нас (сзади)
+    -- Используем скалярное произведение для определения угла
+    -- Более широкий угол: 45 градусов (cos(45) ≈ 0.7)
+    -- Это позволит доджить даже если игрок смотрит немного криво
+    -- Но не будет доджить, если он смотрит в другую сторону
     local dotProduct = directionToLocal:Dot(lookVector)
     
-    -- Доджим если игрок смотрит В НАШЕМ НАПРАВЛЕНИИ (с любой стороны)
-    -- Более мягкое условие для всех сторон
-    -- 0.3 значит: если он смотрит хоть немного в нашу сторону
-    return math.abs(dotProduct) >= 0.3  -- Сделал более мягкое условие
+    -- Если dotProduct > 0.1, значит цель смотрит примерно в нашем направлении
+    -- (угол менее 84 градусов)
+    return dotProduct > 0.1
 end
 
 local function setupHeartbeatProcessing()
@@ -4602,24 +4601,21 @@ local function setupHeartbeatProcessing()
             local targetRoot = character:FindFirstChild("HumanoidRootPart")
             if not targetRoot then continue end
             
-            -- ИСПРАВЛЕНИЕ: Правильное вычисление квадрата расстояния
-            local vector = targetRoot.Position - localRoot.Position
-            local distanceSquared = vector.X * vector.X + vector.Y * vector.Y + vector.Z * vector.Z
+            -- Проверяем расстояние с использованием RangeSquared (4.8^2)
+            local distanceVector = targetRoot.Position - localRoot.Position
+            local distanceSquared = distanceVector.Magnitude
             
+            -- Используем точное сравнение с квадратом диапазона
             if distanceSquared > autoDodge.RangeSquared then
                 autoDodge.ActiveAnimations[player.Name] = nil
                 continue
             end
             
-            -- ТЕПЕРЬ: Проверяем, смотрит ли игрок ПРЯМО или ПОЧТИ ПРЯМО на нас
-            -- Если смотрит прямо/почти прямо (isLookingAtPlayer возвращает true) - ДОДЖИМ
-            -- Если смотрит криво/в сторону (isLookingAtPlayer возвращает false) - НЕ доджим
+            -- Проверяем, смотрит ли игрок на нас (любая сторона, даже криво)
             if not isLookingAtPlayer(player, LocalPlayer) then
-                -- Игрок смотрит криво/в сторону - НЕ доджим
                 continue
             end
             
-            -- Игрок смотрит прямо или почти прямо - проверяем анимацию
             local humanoid = character:FindFirstChild("Humanoid")
             if not humanoid then continue end
             
